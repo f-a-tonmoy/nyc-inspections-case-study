@@ -55,7 +55,14 @@ CLIFF_CODES = ["04F", "05A", "05E", "05F", "28-06", "04M", "04K", "04L"]
 def load():
     df = pd.read_parquet(PARQUET)
     df["year"] = df["inspection_date"].dt.year
-    dense = df[(df["year"] >= 2023) & df["boro"].isin(REAL_BOROS)].copy()
+    # The official rolling window is "3 years prior to most recent inspection"
+    # (would yield ~May 2023 cutoff), but DOHMH publishes substantial 2022
+    # data: 6,471 inspections, ramping from 151/mo in Jan 2022 to 971/mo by
+    # Dec 2022. We include calendar year 2022 onward — those inspections are
+    # operationally real, especially in the second half of the year. Findings
+    # here are aggregate rates, which are robust to the early-2022 lighter
+    # months. Anything before 2022 is single-to-low-three-digit residue.
+    dense = df[(df["year"] >= 2022) & df["boro"].isin(REAL_BOROS)].copy()
 
     raw = pd.read_csv(RAW_CSV, dtype=str, keep_default_na=False)
     raw = raw.apply(lambda c: c.str.strip())
@@ -581,7 +588,7 @@ def render(stats: dict, charts: dict) -> str:
             about pests, plumbing, and what actually gets a kitchen shut down.
           </p>
           <div class="byline">
-            Based on the NYC Department of Health's published inspection records · 2023–2026
+            Based on the NYC Department of Health's published inspection records · 2022–2026
           </div>
         </header>
 
@@ -619,7 +626,7 @@ def render(stats: dict, charts: dict) -> str:
         <figure>
           <div class="chart">{charts['hero']}</div>
           <figcaption>
-            Every NYC inspection score from 2023 to 2026, in two-point bins.
+            Every NYC inspection score from 2022 to 2026, in two-point bins.
             Hover any bar for the count; the long right-hand tail is real,
             it's just very thin compared with the A-zone peak.
           </figcaption>
@@ -832,7 +839,9 @@ def render(stats: dict, charts: dict) -> str:
           The first is that DOHMH publishes a <strong>rolling roughly three-year
           window</strong> of inspection records. Earlier inspections drop off
           the back end; the dataset's headline 2007 minimum date is a
-          decorative sliver. Everything in this article is 2023 onward.
+          decorative sliver. Everything in this article covers calendar
+          2022 onward — the period in which the city's inspection program
+          was running at full monthly volume.
         </p>
 
         <p>
@@ -857,8 +866,10 @@ def render(stats: dict, charts: dict) -> str:
           <p>
             Raw violation-grain CSV → one row per inspection in
             <code>src/build_inspections.py</code>. All findings and charts
-            built by <code>src/build_article.py</code>. Restricted to inspection
-            year ≥ 2023 (the dense rolling window) and the five real boroughs.
+            built by <code>src/build_article.py</code>. Restricted to
+            inspection year ≥ 2022 and the five real boroughs. The dataset
+            also contains a small amount of 2007–2021 residue (≤300 rows per
+            year), which has been excluded.
             Charts powered by <a href="https://plotly.com/javascript/">Plotly.js</a>.
           </p>
           <h3>Caveats</h3>
