@@ -108,6 +108,57 @@ def fig_div(fig: go.Figure, div_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Timeline chart — justifies the 2022+ cutoff
+# ---------------------------------------------------------------------------
+def chart_timeline(df_full: pd.DataFrame) -> go.Figure:
+    """Monthly inspections across the full date range, with the chosen
+    analytical window shaded so the reader can see why we cut at 2022."""
+    monthly = (df_full.set_index("inspection_date")
+                       .resample("MS").size()
+                       .rename("n"))
+    monthly = monthly[monthly.index >= "2007-01-01"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=monthly.index, y=monthly.values,
+        mode="lines",
+        line=dict(color=NEUTRAL, width=1.5, shape="spline", smoothing=0.3),
+        fill="tozeroy", fillcolor="rgba(127,140,141,0.20)",
+        hovertemplate="<b>%{x|%b %Y}</b><br>%{y:,} inspections<extra></extra>",
+        showlegend=False,
+    ))
+    # Shade the included window (use pd.Timestamp so the annotation
+    # placement math works; bare strings crash add_vline + annotation).
+    cutoff = pd.Timestamp("2022-01-01")
+    fig.add_vrect(
+        x0=cutoff, x1=monthly.index.max(),
+        fillcolor=ACCENT, opacity=0.08, line_width=0, layer="below",
+    )
+    # Plotly's add_vline+annotation crashes on datetime x-axes (it tries to
+    # mean() the line's x-position with int 0). Add the line and the
+    # annotation separately.
+    fig.add_shape(
+        type="line", xref="x", yref="paper",
+        x0=cutoff, x1=cutoff, y0=0, y1=1,
+        line=dict(color=ACCENT, dash="dash", width=1.5),
+    )
+    fig.add_annotation(
+        x=cutoff, y=1, xref="x", yref="paper",
+        xanchor="left", yanchor="top", xshift=6, yshift=-4,
+        text="included from here →",
+        showarrow=False, font=dict(size=11, color=ACCENT),
+    )
+    fig.update_layout(**base_layout(
+        "Inspections published per month, 2007 through May 2026",
+        height=290,
+    ))
+    fig.update_xaxes(showgrid=False, ticks="outside", tickcolor=RULE)
+    fig.update_yaxes(title="inspections per month",
+                     showgrid=True, gridcolor=RULE, rangemode="tozero")
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # HERO chart — the score spectrum
 # ---------------------------------------------------------------------------
 def chart_hero(dense: pd.DataFrame) -> go.Figure:
@@ -588,32 +639,48 @@ def render(stats: dict, charts: dict) -> str:
             about pests, plumbing, and what actually gets a kitchen shut down.
           </p>
           <div class="byline">
-            Based on the NYC Department of Health's published inspection records · 2022–2026
+            Based on the NYC Department of Health's published inspection records.
           </div>
         </header>
 
         <p class="dropcap">
-          New York City has more restaurants than any other American city —
-          roughly <strong>{s['n_restaurants']:,}</strong> active food establishments at last count,
+          New York City has more restaurants than any other American city.
+          Roughly <strong>{s['n_restaurants']:,}</strong> active food establishments at last count,
           spread across five boroughs and an even longer list of cuisines.
-          Behind that visible city is an invisible one: a small army of public-health
-          inspectors who arrive at each kitchen, unannounced, on a rolling cycle.
-          They tally violations against a long checklist, add up a score, and
-          assign the letter grade that ends up taped to the front window. Higher
-          score, worse kitchen. Anything from 0 to 13 earns an A; 14 to 27 a B;
-          28 and above a C.
+          Behind that visible city is an invisible one: a small army of
+          public-health inspectors who arrive at each kitchen, unannounced, on
+          a rolling cycle. They tally violations against a long checklist, add
+          up a score, and assign the letter grade that ends up taped to the
+          front window. Higher score, worse kitchen. Anything from 0 to 13
+          earns an A; 14 to 27 a B; 28 and above a C.
         </p>
 
         <p>
           Most diners only ever see the grade card. What they don't see is the
-          underlying data — every violation, every inspection, every closure —
-          which the city quietly publishes on its open-data portal. The most
-          recent three years of records cover roughly <em class="stat">{s['n_inspections']:,}</em>
-          inspections. That's a generous slice of the city's food life: every
-          deli, every wedding venue, every late-night Halal cart that has a
-          permit, photographed in a different moment of order or disorder by
-          someone with a clipboard.
+          underlying data: every violation, every inspection, every closure.
+          The city quietly publishes all of it on its open-data portal. That
+          is a generous slice of the city's food life. Every deli, every
+          wedding venue, every late-night Halal cart that has a permit,
+          photographed in a different moment of order or disorder by someone
+          with a clipboard.
         </p>
+
+        <p>
+          How much data, and from when? DOHMH publishes inspections on a
+          rolling roughly three-year window. Records older than that drop off
+          the back end as new ones come in. In practice, the months before
+          2022 are very thinly populated. The program's published output only
+          reached full monthly volume through the back half of that year.
+        </p>
+
+        <figure>
+          <div class="chart">{charts['timeline']}</div>
+          <figcaption>
+            Inspections per published month, January 2007 through May 2026.
+            Everything in this article uses the shaded window (2022 onward),
+            where the program is running at full volume.
+          </figcaption>
+        </figure>
 
         <p>
           Looking at all of those visits at once produces a portrait that no
@@ -627,8 +694,8 @@ def render(stats: dict, charts: dict) -> str:
           <div class="chart">{charts['hero']}</div>
           <figcaption>
             Every NYC inspection score from 2022 to 2026, in two-point bins.
-            Hover any bar for the count; the long right-hand tail is real,
-            it's just very thin compared with the A-zone peak.
+            Hover any bar for the count. The long right-hand tail is real,
+            just very thin compared with the A-zone peak.
           </figcaption>
         </figure>
 
@@ -636,12 +703,12 @@ def render(stats: dict, charts: dict) -> str:
 
         <p>
           The single most surprising number from the data is the one that
-          shouldn't be: <em class="stat">{s['vermin_pct']:.0f}%</em> of New York
-          inspections find evidence of mice, rats, roaches or flies.
-          One in three. Borough to borough, the variation is mild —
+          shouldn't be. <em class="stat">{s['vermin_pct']:.0f}%</em> of New
+          York inspections find evidence of mice, rats, roaches or flies.
+          One in three. Borough to borough, the variation is mild:
           {s['bronx_vermin_pct']:.0f}% in the Bronx, {s['si_vermin_pct']:.0f}% on
-          Staten Island. Neighborhood to neighborhood, the spread is sharper:
-          the worst residential / commercial slice of the city sees a pest
+          Staten Island. Neighborhood to neighborhood, the spread is sharper.
+          The worst residential or commercial slice of the city sees a pest
           violation in roughly <em class="stat">{s['nta_worst_pct']:.0f}%</em>
           of inspections, the cleanest in about <em class="stat">{s['nta_best_pct']:.0f}%</em>.
         </p>
@@ -657,18 +724,19 @@ def render(stats: dict, charts: dict) -> str:
         <p>
           That rate is high enough to mean roughly nothing on its own. If 1 in
           3 inspections finds vermin, then vermin can't be what closes a
-          restaurant — most of those <em class="stat">{s['n_inspections']:,}</em>
+          restaurant. Most of those <em class="stat">{s['n_inspections']:,}</em>
           visits ended with the kitchen still open. The question is what does.
         </p>
 
         <h2><span class="num">02</span>The closure cliff.</h2>
 
         <p>
-          New York City inspectors close a restaurant on the spot in only
-          <em class="stat">{s['baseline_closure_pct']:.2f}%</em> of inspections — fewer than
-          two in every hundred. That headline rate hides a sharper truth.
-          When a few specific violations appear, the closure probability
-          doesn't just creep up. It jumps.
+          Most violations don't shut you down. A handful do. New York City
+          inspectors close a restaurant on the spot in only
+          <em class="stat">{s['baseline_closure_pct']:.2f}%</em> of inspections
+          (fewer than two in every hundred). That headline rate hides a
+          sharper truth. When a few specific violations appear, the closure
+          probability doesn't just creep up. It jumps.
         </p>
 
         <figure>
@@ -682,8 +750,8 @@ def render(stats: dict, charts: dict) -> str:
         </figure>
 
         <p>
-          The pattern is striking. Vermin codes — even the live-roach code,
-          even the live-rat code — push closure risk up by roughly three to
+          The pattern is striking. Vermin codes, even the live-roach code
+          and the live-rat code, push closure risk up by roughly three to
           five times the baseline. They are bad. They are not, by themselves,
           the reason kitchens get shut down. The codes that <em>do</em> shut
           kitchens down are about plumbing.
@@ -692,7 +760,7 @@ def render(stats: dict, charts: dict) -> str:
         <p>
           Inspections containing <em class="stat">04F</em> (food area
           contaminated by sewage) end in a closure <em class="stat">{s['cliff_04F_pct']:.0f}%</em>
-          of the time — nineteen times the baseline rate. <em class="stat">05A</em>
+          of the time, nineteen times the baseline rate. <em class="stat">05A</em>
           (inadequate sewage disposal) and <em class="stat">05E</em>
           (missing or improper toilet facilities) are nearly as severe.
           These are the violations that take a kitchen from "could open
@@ -702,7 +770,7 @@ def render(stats: dict, charts: dict) -> str:
         <div class="callout">
           <strong>It's the plumbing.</strong> A live rat sighting raises your
           chance of being closed by about 5×. A sewage problem raises it by
-          15–19×. Vermin makes the news; sewage takes the keys.
+          15 to 19×. Vermin makes the news; sewage takes the keys.
         </div>
 
         <p>
@@ -713,7 +781,7 @@ def render(stats: dict, charts: dict) -> str:
           (versus <em class="stat">13</em> for everyone else) and a median of
           <em class="stat">{s['cliff_med_viols']:.0f} violations</em> apiece
           (versus three). The plumbing failure is the marker, not the sole
-          cause: when a kitchen reaches that point, a lot has already gone
+          cause. When a kitchen reaches that point, a lot has already gone
           wrong. <strong>{s['cliff_pct_critical']:.0f}%</strong> of those
           inspections also flagged at least one critical food-safety violation.
         </p>
@@ -725,17 +793,17 @@ def render(stats: dict, charts: dict) -> str:
           sewage citation. A Manhattan <em class="stat">% Arabica</em> hit 163
           in March 2026 under the same code. A small Brooklyn restaurant called
           Jay &amp; Son Latin Flavor recorded a score of <em class="stat">200</em>
-          this past spring — eighteen violations, eleven of them critical,
-          sewage among them. Each of these kitchens was closed that day.
+          this past spring, with eighteen violations, eleven of them critical,
+          and sewage among them. Each of these kitchens was closed that day.
         </p>
 
         <h2><span class="num">03</span>What happens next.</h2>
 
         <p>
           Closures look severe but they're not, in most cases, permanent.
-          The city moves fast: after a sewage-cliff closure, the median wait
+          The city moves fast. After a sewage-cliff closure, the median wait
           until the next inspection is just <em class="stat">{s['days_to_followup']}
-          days</em> — compared with about <em class="stat">70 days</em> for a
+          days</em>, compared with about <em class="stat">70 days</em> for a
           routine cycle re-inspection. Roughly <em class="stat">{s['pct_reopened']:.0f}%</em>
           of those follow-ups end with DOHMH formally re-opening the
           restaurant. The kitchen, usually, gets cleaned up.
@@ -746,10 +814,10 @@ def render(stats: dict, charts: dict) -> str:
           fails its initial cycle inspection in the C zone (score 28 or
           above): <em class="stat">{s['n_cz']:,}</em> such failures in the
           window. Median score on the re-inspection drops by
-          <em class="stat">{s['median_drop']:.0f}</em> points — from
+          <em class="stat">{s['median_drop']:.0f}</em> points, from
           <em class="stat">{s['median_initial']:.0f}</em> all the way down to
-          <em class="stat">{s['median_reinsp']:.0f}</em>. More than half —
-          <em class="stat">{s['pct_recover_A']:.0f}%</em> — recover all the
+          <em class="stat">{s['median_reinsp']:.0f}</em>. More than half
+          (<em class="stat">{s['pct_recover_A']:.0f}%</em>) recover all the
           way to an A on the very next visit.
         </p>
 
@@ -768,17 +836,17 @@ def render(stats: dict, charts: dict) -> str:
           actually <em>got worse</em> on the next inspection. Another
           <em class="stat">{s['pct_reclosed']:.0f}%</em> of sewage-cliff
           closures were re-closed at the very next visit. The recovery system
-          is real, but it leaks at the bottom of the distribution — the same
+          is real, but it leaks at the bottom of the distribution. The same
           kitchens keep failing.
         </p>
 
         <h2><span class="num">04</span>The cuisine spectrum.</h2>
 
         <p>
-          Closure rates are far from uniform across cuisines. Indian
-          restaurants are closed during inspection in <em class="stat">{s['indian_pct']:.1f}%</em>
-          of visits; French restaurants in just <em class="stat">{s['french_pct']:.2f}%</em>
-          — a roughly <em class="stat">{s['indian_pct']/s['french_pct']:.0f}×</em>
+          Not every cuisine fares the same. Indian restaurants are closed
+          during inspection in <em class="stat">{s['indian_pct']:.1f}%</em>
+          of visits; French restaurants in just <em class="stat">{s['french_pct']:.2f}%</em>.
+          That's a roughly <em class="stat">{s['indian_pct']/s['french_pct']:.0f}×</em>
           gap from one end of the menu to the other.
         </p>
 
@@ -787,16 +855,16 @@ def render(stats: dict, charts: dict) -> str:
           <figcaption>
             Top and bottom of the cuisine closure-rate ranking. Bar color
             reflects what share of that cuisine's restaurants are located in
-            Manhattan — a quiet reminder that "by cuisine" and "by
+            Manhattan, a quiet reminder that "by cuisine" and "by
             neighborhood" are not separable in this city.
           </figcaption>
         </figure>
 
         <p>
-          Read this chart carefully. The cuisines at the top — Indian, Middle
-          Eastern, Caribbean, Chinese — are heavily concentrated outside
-          Manhattan. The cuisines at the bottom — French, Italian, Irish,
-          Hamburgers — are disproportionately Manhattan establishments. We
+          Read this chart carefully. The cuisines at the top (Indian, Middle
+          Eastern, Caribbean, Chinese) are heavily concentrated outside
+          Manhattan. The cuisines at the bottom (French, Italian, Irish,
+          Hamburgers) are disproportionately Manhattan establishments. We
           can't tell, from this data alone, whether what we're seeing is a
           property of the cuisines themselves or a property of the
           neighborhoods they live in. Most likely it's some of both. The
@@ -810,8 +878,8 @@ def render(stats: dict, charts: dict) -> str:
           interesting variation. Sort New York's 51 City Council districts
           by their closure rate and the spread is dramatic:
           <em class="stat">{s['district_high_pct']:.2f}%</em> at the top,
-          <em class="stat">{s['district_low_pct']:.2f}%</em> at the bottom —
-          a <em class="stat">{s['district_ratio']:.1f}×</em> gap.
+          <em class="stat">{s['district_low_pct']:.2f}%</em> at the bottom.
+          That is a <em class="stat">{s['district_ratio']:.1f}×</em> gap.
           The familiar borough comparison covers about a 2× range; sub-borough
           geography covers nearly four times that.
         </p>
@@ -827,7 +895,7 @@ def render(stats: dict, charts: dict) -> str:
 
         <p>
           "Brooklyn" and "Manhattan" are large coalitions. Inside them are
-          districts that look almost nothing alike — a quiet reminder that
+          districts that look almost nothing alike. A quiet reminder that
           when we talk about the food landscape of a city, we are nearly
           always talking about the food landscape of a few square blocks.
         </p>
@@ -840,15 +908,15 @@ def render(stats: dict, charts: dict) -> str:
           window</strong> of inspection records. Earlier inspections drop off
           the back end; the dataset's headline 2007 minimum date is a
           decorative sliver. Everything in this article covers calendar
-          2022 onward — the period in which the city's inspection program
+          2022 onward, the period in which the city's inspection program
           was running at full monthly volume.
         </p>
 
         <p>
           The second caution is more consequential. The city only publishes
           records for restaurants that are still in active status. Establishments
-          that permanently closed — including any that closed after enforcement
-          and never reopened — drop out of the file entirely. The city's
+          that permanently closed (including any that closed after enforcement
+          and never reopened) drop out of the file entirely. The city's
           closure rate, then, undercounts the most consequential closure of
           all. The numbers in this article describe what happens to surviving
           restaurants. They do not describe what happens to the ones that
@@ -858,7 +926,7 @@ def render(stats: dict, charts: dict) -> str:
         <footer>
           <h3>Source</h3>
           <p>
-            NYC OpenData — <a href="https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j">DOHMH
+            NYC OpenData · <a href="https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j">DOHMH
             Restaurant Inspection Results</a> (dataset id <code>43nn-pn8j</code>),
             snapshot of 2026-05-30.
           </p>
@@ -970,6 +1038,7 @@ def main():
 
     # Build charts
     figs = {
+        "timeline":  chart_timeline(df),
         "hero":      chart_hero(dense),
         "vermin":    chart_vermin(by_boro_v, city_v),
         "cliff":     chart_cliff(baseline, cliff_agg),
