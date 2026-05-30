@@ -212,7 +212,7 @@ def chart_hero(dense: pd.DataFrame) -> go.Figure:
         )
 
     fig.update_layout(**base_layout(
-        "Every NYC inspection, scored. Most pile up around A. A long tail doesn't.",
+        "Every NYC inspection, scored. The bulk near A; a thin, consequential tail.",
         height=440,
     ))
     fig.update_xaxes(
@@ -501,9 +501,13 @@ def compute_bunching(dense: pd.DataFrame) -> tuple[pd.Series, dict]:
     re_insp_s = re_insp_s[re_insp_s.between(0, 35)].astype(int)
     re_counts = re_insp_s.value_counts().sort_index().reindex(range(0, 36), fill_value=0)
     stats = {
-        "n_at_13": int(counts.loc[13]),
-        "n_at_14": int(counts.loc[14]),
-        "ratio_13_14": float(counts.loc[13] / max(counts.loc[14], 1)),
+        "n_at_12":       int(counts.loc[12]),
+        "n_at_13":       int(counts.loc[13]),
+        "n_at_14":       int(counts.loc[14]),
+        "n_at_12_13":    int(counts.loc[12] + counts.loc[13]),
+        "ratio_13_14":   float(counts.loc[13] / max(counts.loc[14], 1)),
+        "ratio_12_14":   float(counts.loc[12] / max(counts.loc[14], 1)),
+        "cluster_ratio": float((counts.loc[12] + counts.loc[13]) / max(counts.loc[14], 1)),
         "re_ratio_13_14": float(re_counts.loc[13] / max(re_counts.loc[14], 1)),
     }
     return counts, stats
@@ -512,45 +516,58 @@ def compute_bunching(dense: pd.DataFrame) -> tuple[pd.Series, dict]:
 def chart_bunching(counts: pd.Series) -> go.Figure:
     xs = counts.index.tolist()
     ys = counts.values.tolist()
-    # Color the cliff bars strongly; everything else is muted by grade band.
+    # Highlight the 12-13 pile-up cluster (slate) and the 14 cliff (red).
+    # Everything else fades into grade-band tints.
+    PILEUP = "#2c3e50"
+
     def color(x):
-        if x == 13: return "#2c3e50"   # the pile-up
-        if x == 14: return ACCENT      # the cliff
-        if x <= 13: return "#5d8aa8"   # A zone
-        if x <= 27: return ACCENT_2    # B zone
-        return "#7e57c2"               # C zone
+        if x in (12, 13): return PILEUP    # the pile-up cluster
+        if x == 14:       return ACCENT    # the cliff
+        if x <= 13:       return "#9fb8c8"  # A zone, muted
+        if x <= 27:       return "#f0b27a"  # B zone, muted
+        return "#b39ddb"                    # C zone, muted
 
     fig = go.Figure(go.Bar(
         x=xs, y=ys, marker_color=[color(x) for x in xs], marker_line_width=0,
         hovertemplate="Score = %{x}<br>%{y:,} inspections<extra></extra>",
     ))
     # Cutoff guide lines
+    y_top = max(ys) * 1.12
     for x_cut, label in [(13.5, "A | B cutoff"), (27.5, "B | C cutoff")]:
-        fig.add_shape(type="line", x0=x_cut, x1=x_cut, y0=0, y1=max(ys)*1.10,
+        fig.add_shape(type="line", x0=x_cut, x1=x_cut, y0=0, y1=y_top,
                       line=dict(color=INK, dash="dash", width=1))
-        fig.add_annotation(x=x_cut, y=max(ys)*1.10, text=label,
+        fig.add_annotation(x=x_cut, y=y_top, text=label,
                            showarrow=False, yshift=10,
                            font=dict(size=11, color=INK_DIM))
-    # Annotate the cliff itself
+    # Bracket annotation over the 12-13 cluster
+    cluster_top = max(ys[12], ys[13]) * 1.04
+    fig.add_shape(
+        type="line", x0=12, x1=13, y0=cluster_top, y1=cluster_top,
+        line=dict(color=PILEUP, width=1.5),
+    )
     fig.add_annotation(
-        x=14, y=ys[14], ax=80, ay=-50, arrowhead=0, arrowwidth=1, arrowcolor=ACCENT,
-        text=f"<b>{ys[14]:,}</b><br>at score 14",
+        x=12.5, y=cluster_top, yshift=8,
+        text=f"<b>{ys[12]+ys[13]:,}</b> at 12 + 13",
+        showarrow=False,
+        font=dict(size=11, color=PILEUP),
+    )
+    # Annotate the cliff at 14
+    fig.add_annotation(
+        x=14, y=ys[14], ax=70, ay=-60,
+        arrowhead=0, arrowwidth=1, arrowcolor=ACCENT,
+        text=f"<b>{ys[14]:,}</b> at score 14<br>"
+             f"({(ys[12]+ys[13])/max(ys[14],1):.0f}× drop)",
         font=dict(size=11, color=INK),
         bgcolor="white", bordercolor=ACCENT, borderwidth=1, borderpad=5,
     )
-    fig.add_annotation(
-        x=13, y=ys[13], ax=-80, ay=-40, arrowhead=0, arrowwidth=1, arrowcolor="#2c3e50",
-        text=f"<b>{ys[13]:,}</b><br>at score 13",
-        font=dict(size=11, color=INK),
-        bgcolor="white", bordercolor="#2c3e50", borderwidth=1, borderpad=5,
-    )
-    layout = base_layout("Inspection scores cluster just under the A/B cutoff",
+    layout = base_layout("A cliff right at the A/B boundary",
                          height=400)
     layout["margin"] = dict(l=10, r=20, t=84, b=44)
     fig.update_layout(**layout)
     fig.update_xaxes(title="Inspection score", dtick=2, range=[-0.6, 35.6],
                      showgrid=False, ticks="outside", tickcolor=RULE)
-    fig.update_yaxes(title="Inspections", showgrid=True, gridcolor=RULE)
+    fig.update_yaxes(title="Inspections", showgrid=True, gridcolor=RULE,
+                     range=[0, y_top * 1.05])
     return fig
 
 
@@ -588,8 +605,10 @@ def chart_cliff_map(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
         hovertext=hovers, hoverinfo="text",
     ))
     fig.update_layout(
+        # carto-positron: clean light basemap, streets only, no POI clutter.
+        # Other clean options if needed later: "carto-voyager", "carto-darkmatter".
         map=dict(
-            style="open-street-map",
+            style="carto-positron",
             center=dict(lat=40.732, lon=-73.95),
             zoom=10.2,
         ),
@@ -1026,41 +1045,51 @@ def render(stats: dict, charts: dict) -> str:
         <h2><span class="num">03</span>The 13-point ceiling.</h2>
 
         <p>
-          Look closely at the score distribution again and something strange
-          jumps out. Scores cluster heavily around 12 and 13, then fall off a
-          cliff at 14. There are
-          <em class="stat">{s['n_at_13']:,}</em> inspections in the file
-          scoring exactly 13. There are
-          <em class="stat">{s['n_at_14']:,}</em> scoring 14, one point higher.
-          A score of 13 is roughly
-          <em class="stat">{s['ratio_13_14']:.0f}×</em> as common as a score
-          of 14.
+          Zoom in on the lower end of the distribution and something
+          strange falls out. Inspection scores pile up at exactly
+          <em class="stat">12</em> and <em class="stat">13</em>, the two
+          highest scores that still earn an A. Score 12 alone is the single
+          most common score in the entire dataset, with
+          <em class="stat">{s['n_at_12']:,}</em> inspections. Score 13 is the
+          second most common, with <em class="stat">{s['n_at_13']:,}</em>.
+          Together those two integers account for
+          <em class="stat">{s['n_at_12_13']:,}</em> inspections.
+        </p>
+
+        <p>
+          And then, at score 14, the count collapses. Only
+          <em class="stat">{s['n_at_14']:,}</em> inspections land there, one
+          point above the A/B grade boundary. The combined pile-up at 12 and
+          13 is roughly <em class="stat">{s['cluster_ratio']:.0f}×</em> the
+          count at 14, despite the bins being one point apart.
         </p>
 
         <figure>
           <div class="chart">{charts['bunching']}</div>
           <figcaption>
-            Inspection counts at each integer score from 0 to 35. The dashed
-            lines mark the grade-card cutoffs. Hover any bar for the count.
+            Inspection counts at each integer score from 0 to 35. The slate
+            bars are the 12–13 pile-up; the red bar is score 14. Hover any
+            bar for the count.
           </figcaption>
         </figure>
 
         <p>
           This is not random. The grade-card boundary lives exactly between
-          13 and 14. In the dataset, every single inspection scoring 0 to 13
-          received an A. Every single inspection scoring 14 to 27 received a
-          B. A one-point swing is the difference between a green A in the
+          13 and 14. In the published data, every single inspection scoring
+          0 through 13 received an A. Every single inspection scoring 14
+          through 27 received a B. A one-point swing on the inspector's
+          worksheet is the difference between a green A taped to the front
           window and a yellow B that has to stay up until you re-inspect.
         </p>
 
         <p>
           Re-inspections, whose entire purpose is to recover the A, show the
-          discontinuity at its sharpest. A re-inspection landing at 13 is
+          same discontinuity. A re-inspection landing at 13 is roughly
           <em class="stat">{s['re_ratio_13_14']:.0f}×</em> as common as one
           landing at 14. The data does not say whether the pile-up reflects
-          restaurants cleaning up just enough or inspectors rounding marginal
-          cases down to the safe side of the line. Most likely it reflects
-          both. Either way, the A is a target, not a description.
+          restaurants cleaning up just enough or inspectors rounding
+          marginal cases down to the safe side of the line. Most likely it
+          reflects both. Either way, the A is a target, not a description.
         </p>
 
         <h2><span class="num">04</span>What happens next.</h2>
