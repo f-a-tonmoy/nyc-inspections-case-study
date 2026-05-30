@@ -485,6 +485,215 @@ def chart_cuisine(panel: pd.DataFrame) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
+# NEW — The 13-point ceiling (score bunching at the A/B grade cutoff)
+# ---------------------------------------------------------------------------
+def compute_bunching(dense: pd.DataFrame) -> tuple[pd.Series, dict]:
+    """Single-point score histogram 0–35 and headline numbers for prose."""
+    s = dense["score"].dropna()
+    s = s[s.between(0, 35)]
+    counts = s.astype(int).value_counts().sort_index()
+    counts = counts.reindex(range(0, 36), fill_value=0)
+    # Re-inspection-only counts for the prose ("the cliff is sharpest in re-insp")
+    re_insp_s = dense[
+        dense["inspection_type"].astype(str).str.contains("Re-inspection",
+                                                          regex=False, na=False)
+    ]["score"].dropna()
+    re_insp_s = re_insp_s[re_insp_s.between(0, 35)].astype(int)
+    re_counts = re_insp_s.value_counts().sort_index().reindex(range(0, 36), fill_value=0)
+    stats = {
+        "n_at_13": int(counts.loc[13]),
+        "n_at_14": int(counts.loc[14]),
+        "ratio_13_14": float(counts.loc[13] / max(counts.loc[14], 1)),
+        "re_ratio_13_14": float(re_counts.loc[13] / max(re_counts.loc[14], 1)),
+    }
+    return counts, stats
+
+
+def chart_bunching(counts: pd.Series) -> go.Figure:
+    xs = counts.index.tolist()
+    ys = counts.values.tolist()
+    # Color the cliff bars strongly; everything else is muted by grade band.
+    def color(x):
+        if x == 13: return "#2c3e50"   # the pile-up
+        if x == 14: return ACCENT      # the cliff
+        if x <= 13: return "#5d8aa8"   # A zone
+        if x <= 27: return ACCENT_2    # B zone
+        return "#7e57c2"               # C zone
+
+    fig = go.Figure(go.Bar(
+        x=xs, y=ys, marker_color=[color(x) for x in xs], marker_line_width=0,
+        hovertemplate="Score = %{x}<br>%{y:,} inspections<extra></extra>",
+    ))
+    # Cutoff guide lines
+    for x_cut, label in [(13.5, "A | B cutoff"), (27.5, "B | C cutoff")]:
+        fig.add_shape(type="line", x0=x_cut, x1=x_cut, y0=0, y1=max(ys)*1.10,
+                      line=dict(color=INK, dash="dash", width=1))
+        fig.add_annotation(x=x_cut, y=max(ys)*1.10, text=label,
+                           showarrow=False, yshift=10,
+                           font=dict(size=11, color=INK_DIM))
+    # Annotate the cliff itself
+    fig.add_annotation(
+        x=14, y=ys[14], ax=80, ay=-50, arrowhead=0, arrowwidth=1, arrowcolor=ACCENT,
+        text=f"<b>{ys[14]:,}</b><br>at score 14",
+        font=dict(size=11, color=INK),
+        bgcolor="white", bordercolor=ACCENT, borderwidth=1, borderpad=5,
+    )
+    fig.add_annotation(
+        x=13, y=ys[13], ax=-80, ay=-40, arrowhead=0, arrowwidth=1, arrowcolor="#2c3e50",
+        text=f"<b>{ys[13]:,}</b><br>at score 13",
+        font=dict(size=11, color=INK),
+        bgcolor="white", bordercolor="#2c3e50", borderwidth=1, borderpad=5,
+    )
+    layout = base_layout("Inspection scores cluster just under the A/B cutoff",
+                         height=400)
+    layout["margin"] = dict(l=10, r=20, t=84, b=44)
+    fig.update_layout(**layout)
+    fig.update_xaxes(title="Inspection score", dtick=2, range=[-0.6, 35.6],
+                     showgrid=False, ticks="outside", tickcolor=RULE)
+    fig.update_yaxes(title="Inspections", showgrid=True, gridcolor=RULE)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# NEW — Map: the sewage-cliff inspections, pin-pointed
+# ---------------------------------------------------------------------------
+def chart_cliff_map(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
+    """Plot every inspection that contained one of the top-3 sewage codes."""
+    top3 = ["04F", "05A", "05E"]
+    cliff_keys = (raw[raw["VIOLATION CODE"].isin(top3)]
+                    .groupby(["CAMIS", "_date"]).size().index)
+    mi = pd.MultiIndex.from_frame(dense[["camis", "inspection_date"]])
+    sub = dense[mi.isin(cliff_keys)].copy()
+    sub = sub[sub["latitude"].notna() & sub["longitude"].notna()]
+
+    colors = [ACCENT if c else NEUTRAL for c in sub["closed"]]
+    sizes  = [11 if c else 7 for c in sub["closed"]]
+
+    def hover_row(r):
+        addr = f"{r['building']} {r['street']}".strip()
+        when = r["inspection_date"].strftime("%b %d, %Y")
+        score = int(r["score"]) if pd.notna(r["score"]) else "—"
+        return (f"<b>{r['dba']}</b><br>"
+                f"{addr}, {r['boro']}<br>"
+                f"{when}<br>"
+                f"Score: <b>{score}</b>"
+                f" · {int(r['n_violations'])} violations<br>"
+                f"<b>{'CLOSED' if r['closed'] else 'open'}</b>")
+    hovers = sub.apply(hover_row, axis=1).tolist()
+
+    fig = go.Figure(go.Scattermap(
+        lat=sub["latitude"], lon=sub["longitude"],
+        mode="markers",
+        marker=dict(size=sizes, color=colors, opacity=0.82),
+        hovertext=hovers, hoverinfo="text",
+    ))
+    fig.update_layout(
+        map=dict(
+            style="open-street-map",
+            center=dict(lat=40.732, lon=-73.95),
+            zoom=10.2,
+        ),
+        margin=dict(l=0, r=0, t=46, b=0),
+        title=dict(
+            text=f"{len(sub):,} sewage-cliff inspections, pinpointed (red = closed by DOHMH)",
+            font=dict(size=15, color=INK), x=0.02, xanchor="left",
+        ),
+        font=dict(family="Inter, system-ui, sans-serif", size=13, color=INK),
+        height=520,
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# NEW — Cuisine signature heatmap
+# ---------------------------------------------------------------------------
+def chart_cuisine_signatures(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
+    """For each top cuisine, show which violation codes are over-represented."""
+    # Pick top cuisines by inspection volume.
+    top_cuisines = (dense["cuisine_description"]
+                      .value_counts()
+                      .head(12)
+                      .index.tolist())
+    top_cuisines = [c for c in top_cuisines if str(c).strip() != ""]
+
+    # Build a (camis, date, code) explosion from the inspection-grain parquet.
+    exploded = (dense[dense["cuisine_description"].isin(top_cuisines)]
+                  .assign(code=lambda d: d["violation_codes"].str.split(","))
+                  .explode("code"))
+    exploded = exploded[exploded["code"].astype(str).ne("")]
+
+    # Pick the violation codes that appear most often across these cuisines.
+    code_totals = exploded["code"].value_counts()
+    top_codes = code_totals.head(15).index.tolist()
+    # Order codes by code string for stability.
+    top_codes = sorted(top_codes)
+
+    # Rate = inspections containing this code / total inspections of this cuisine
+    cuis_totals = dense[dense["cuisine_description"].isin(top_cuisines)] \
+        .groupby("cuisine_description", observed=True).size()
+    cell_rate = (exploded.groupby(["cuisine_description", "code"], observed=True)
+                          .size().unstack(fill_value=0))
+    cell_rate = cell_rate.reindex(index=top_cuisines, columns=top_codes,
+                                  fill_value=0)
+    cell_rate = cell_rate.div(cuis_totals, axis=0).fillna(0)
+
+    # City-wide rate for each code (any cuisine)
+    all_exp = (dense.assign(code=lambda d: d["violation_codes"].str.split(","))
+                    .explode("code"))
+    all_exp = all_exp[all_exp["code"].astype(str).ne("")]
+    city_rate = (all_exp[all_exp["code"].isin(top_codes)]
+                   .groupby("code").size()
+                   .reindex(top_codes, fill_value=0) / len(dense))
+
+    # Lift: cuisine's rate / city rate. Plotted as log2 for symmetry.
+    lift = cell_rate.div(city_rate, axis=1).replace([np.inf, -np.inf], np.nan).fillna(1)
+    log_lift = np.log2(lift.clip(lower=0.1))
+
+    # Short code descriptions for hover.
+    desc_map = code_description(raw, top_codes)
+    hover_text = [
+        [
+            f"<b>{cuis}</b><br>"
+            f"Code {code}: {desc_map.get(code, '')}<br>"
+            f"Rate in this cuisine: {cell_rate.loc[cuis, code]*100:.1f}%<br>"
+            f"City-wide rate: {city_rate[code]*100:.1f}%<br>"
+            f"<b>{lift.loc[cuis, code]:.2f}× lift</b>"
+            for code in top_codes
+        ]
+        for cuis in top_cuisines
+    ]
+
+    fig = go.Figure(go.Heatmap(
+        z=log_lift.values,
+        x=top_codes,
+        y=top_cuisines,
+        text=lift.round(2).values,
+        texttemplate="%{text:.1f}×",
+        textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=hover_text,
+        colorscale=[(0.0, "#5d8aa8"), (0.5, "white"), (1.0, ACCENT)],
+        zmid=0,  # log2 = 0 means equal to city baseline
+        colorbar=dict(
+            title="lift",
+            tickvals=[-1, 0, 1],
+            ticktext=["½×", "1×", "2×"],
+            len=0.7,
+        ),
+    ))
+    layout = base_layout(
+        "Each cuisine's signature: which violation codes show up more (or less) than average",
+        height=440,
+    )
+    layout["margin"] = dict(l=10, r=20, t=80, b=44)
+    fig.update_layout(**layout)
+    fig.update_xaxes(title="Violation code", side="bottom", tickangle=0,
+                     showgrid=False)
+    fig.update_yaxes(title="", autorange="reversed", showgrid=False)
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # §5 — Council district spread
 # ---------------------------------------------------------------------------
 def compute_districts(dense: pd.DataFrame):
@@ -797,7 +1006,64 @@ def render(stats: dict, charts: dict) -> str:
           and sewage among them. Each of these kitchens was closed that day.
         </p>
 
-        <h2><span class="num">03</span>What happens next.</h2>
+        <p>
+          The sewage-cliff inspections aren't concentrated in one part of the
+          city. They're scattered across all five boroughs, in every
+          neighborhood the published data covers. Each red dot below is an
+          on-the-spot closure that involved a sewage code; each grey dot, an
+          inspection that found the same issue but did not (yet) end in a
+          closure. Hover any pin for the restaurant, address, score, and date.
+        </p>
+
+        <figure>
+          <div class="chart">{charts['cliffmap']}</div>
+          <figcaption>
+            All <em class="stat">{s['cliff_map_n']:,}</em> inspections containing
+            a top-three sewage code, 2022 onward. Scroll to zoom, drag to pan.
+          </figcaption>
+        </figure>
+
+        <h2><span class="num">03</span>The 13-point ceiling.</h2>
+
+        <p>
+          Look closely at the score distribution again and something strange
+          jumps out. Scores cluster heavily around 12 and 13, then fall off a
+          cliff at 14. There are
+          <em class="stat">{s['n_at_13']:,}</em> inspections in the file
+          scoring exactly 13. There are
+          <em class="stat">{s['n_at_14']:,}</em> scoring 14, one point higher.
+          A score of 13 is roughly
+          <em class="stat">{s['ratio_13_14']:.0f}×</em> as common as a score
+          of 14.
+        </p>
+
+        <figure>
+          <div class="chart">{charts['bunching']}</div>
+          <figcaption>
+            Inspection counts at each integer score from 0 to 35. The dashed
+            lines mark the grade-card cutoffs. Hover any bar for the count.
+          </figcaption>
+        </figure>
+
+        <p>
+          This is not random. The grade-card boundary lives exactly between
+          13 and 14. In the dataset, every single inspection scoring 0 to 13
+          received an A. Every single inspection scoring 14 to 27 received a
+          B. A one-point swing is the difference between a green A in the
+          window and a yellow B that has to stay up until you re-inspect.
+        </p>
+
+        <p>
+          Re-inspections, whose entire purpose is to recover the A, show the
+          discontinuity at its sharpest. A re-inspection landing at 13 is
+          <em class="stat">{s['re_ratio_13_14']:.0f}×</em> as common as one
+          landing at 14. The data does not say whether the pile-up reflects
+          restaurants cleaning up just enough or inspectors rounding marginal
+          cases down to the safe side of the line. Most likely it reflects
+          both. Either way, the A is a target, not a description.
+        </p>
+
+        <h2><span class="num">04</span>What happens next.</h2>
 
         <p>
           Closures look severe but they're not, in most cases, permanent.
@@ -840,7 +1106,7 @@ def render(stats: dict, charts: dict) -> str:
           kitchens keep failing.
         </p>
 
-        <h2><span class="num">04</span>The cuisine spectrum.</h2>
+        <h2><span class="num">05</span>The cuisine spectrum.</h2>
 
         <p>
           Not every cuisine fares the same. Indian restaurants are closed
@@ -871,7 +1137,30 @@ def render(stats: dict, charts: dict) -> str:
           confound is the finding.
         </p>
 
-        <h2><span class="num">05</span>The smaller-than-borough story.</h2>
+        <p>
+          Where cuisines clearly do differ is in <em>how</em> they fail.
+          Each cuisine has a signature pattern of citations: codes that show
+          up more (or less) often than the city-wide baseline. A few
+          examples: Chinese kitchens are over-represented on the rats and
+          mice codes. Coffee shops over-cite for missing pest-management
+          contracts. Italian and French restaurants under-cite almost
+          everywhere. The heatmap below shows the most common 15 codes
+          across the top 12 cuisines, with each cell scaled to the
+          city-wide rate for that code.
+        </p>
+
+        <figure>
+          <div class="chart">{charts['signatures']}</div>
+          <figcaption>
+            Lift relative to the city average for each (cuisine × code) pair.
+            <span style="color:#c0392b">Red</span> means this cuisine is more
+            likely than average to receive that code;
+            <span style="color:#5d8aa8">blue</span> means less likely.
+            Hover any cell for the full code description and the underlying rates.
+          </figcaption>
+        </figure>
+
+        <h2><span class="num">06</span>The smaller-than-borough story.</h2>
 
         <p>
           The familiar five-borough frame turns out to hide most of the
@@ -945,7 +1234,7 @@ def render(stats: dict, charts: dict) -> str:
             "Active restaurants" means any CAMIS that appears in the published
             file; permanently closed restaurants are not represented. The
             cuisine analysis is not adjusted for the cuisine/geography
-            confound described in §4. Re-inspection pairs are bounded to ≤180
+            confound described in §5. Re-inspection pairs are bounded to ≤180
             days so the next cycle's initial inspection is not counted as
             the previous one's re-inspection.
           </p>
@@ -1005,6 +1294,12 @@ def main():
     # Districts
     dist = compute_districts(dense)
 
+    # Bunching
+    bunch_counts, bunch_stats = compute_bunching(dense)
+
+    # Cliff map count (for the prose number)
+    cliff_with_geo = cliff[cliff["latitude"].notna() & cliff["longitude"].notna()]
+
     # Stats dict — every number quoted in the prose
     stats = {
         "n_inspections":         int(len(dense)),
@@ -1020,6 +1315,7 @@ def main():
         "cliff_med_score":       float(cliff["score"].median()),
         "cliff_med_viols":       float(cliff["n_violations"].median()),
         "cliff_pct_critical":    float((cliff["n_critical"] > 0).mean() * 100),
+        "cliff_map_n":           int(len(cliff_with_geo)),
         "days_to_followup":      days_to_followup,
         "pct_reopened":          pct_reopened,
         "pct_reclosed":          pct_reclosed,
@@ -1034,17 +1330,21 @@ def main():
         "district_high_pct":     float(dist["closure_pct"].max()),
         "district_low_pct":      float(dist["closure_pct"].min()),
         "district_ratio":        float(dist["closure_pct"].max() / dist["closure_pct"].min()),
+        **bunch_stats,
     }
 
     # Build charts
     figs = {
-        "timeline":  chart_timeline(df),
-        "hero":      chart_hero(dense),
-        "vermin":    chart_vermin(by_boro_v, city_v),
-        "cliff":     chart_cliff(baseline, cliff_agg),
-        "comeback":  chart_comeback(pairs),
-        "cuisine":   chart_cuisine(cuisine_panel),
-        "districts": chart_districts(dist),
+        "timeline":   chart_timeline(df),
+        "hero":       chart_hero(dense),
+        "vermin":     chart_vermin(by_boro_v, city_v),
+        "cliff":      chart_cliff(baseline, cliff_agg),
+        "cliffmap":   chart_cliff_map(dense, raw),
+        "bunching":   chart_bunching(bunch_counts),
+        "comeback":   chart_comeback(pairs),
+        "cuisine":    chart_cuisine(cuisine_panel),
+        "signatures": chart_cuisine_signatures(dense, raw),
+        "districts":  chart_districts(dist),
     }
     charts = {k: fig_div(v, f"chart-{k}") for k, v in figs.items()}
 
