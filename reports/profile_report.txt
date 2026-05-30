@@ -1,0 +1,232 @@
+DOHMH RESTAURANT INSPECTIONS — DATA PROFILE (Phase 1)
+Descriptive only — no analytical angle chosen.
+Source rows: 296,393  |  columns: 27
+
+>>>>> STEP 2.1 — Shape, columns, dtypes, sample
+Shape: 296,393 rows x 27 columns
+
+All columns (raw dtype is 'object'/string for every column by design):
+  [ 0] CAMIS
+  [ 1] DBA
+  [ 2] BORO
+  [ 3] BUILDING
+  [ 4] STREET
+  [ 5] ZIPCODE
+  [ 6] PHONE
+  [ 7] CUISINE DESCRIPTION
+  [ 8] INSPECTION DATE
+  [ 9] ACTION
+  [10] VIOLATION CODE
+  [11] VIOLATION DESCRIPTION
+  [12] CRITICAL FLAG
+  [13] SCORE
+  [14] GRADE
+  [15] GRADE DATE
+  [16] RECORD DATE
+  [17] INSPECTION TYPE
+  [18] Latitude
+  [19] Longitude
+  [20] Community Board
+  [21] Council District
+  [22] Census Tract
+  [23] BIN
+  [24] BBL
+  [25] NTA
+  [26] Location
+
+All expected key columns are present.
+
+Sample — key fields for the first 2 rows (one field per line):
+  --- row 0 ---
+    CAMIS           = '50174508'
+    INSPECTION DATE = '01/01/1900'
+    BORO            = 'Queens'
+    ZIPCODE         = ''
+    Latitude        = '0'
+    Longitude       = '0'
+    ACTION          = ''
+    VIOLATION CODE  = ''
+    CRITICAL FLAG   = 'Not Applicable'
+    SCORE           = ''
+    GRADE           = ''
+    GRADE DATE      = ''
+    INSPECTION TYPE = ''
+  --- row 1 ---
+    CAMIS           = '50150875'
+    INSPECTION DATE = '01/01/1900'
+    BORO            = 'Queens'
+    ZIPCODE         = '11371'
+    Latitude        = ''
+    Longitude       = ''
+    ACTION          = ''
+    VIOLATION CODE  = ''
+    CRITICAL FLAG   = 'Not Applicable'
+    SCORE           = ''
+    GRADE           = ''
+    GRADE DATE      = ''
+    INSPECTION TYPE = ''
+
+>>>>> STEP 2.2 — Confirm the grain (one row per VIOLATION)
+If one row = one violation, a single inspection (one CAMIS on one
+INSPECTION DATE) should appear on MULTIPLE rows.
+
+Example inspection with the most rows: CAMIS=50144090, DATE=03/18/2026 -> 24 rows.
+
+Columns that are CONSTANT across all those rows (the inspection):
+    CAMIS           = '50144090'  (n distinct = 1)
+    INSPECTION DATE = '03/18/2026'  (n distinct = 1)
+    SCORE           = '59'  (n distinct = 1)
+    GRADE           = ''  (n distinct = 1)
+    INSPECTION TYPE = 'Cycle Inspection / Initial Inspection'  (n distinct = 1)
+    ACTION          = 'Violations were cited in the following area(s).'  (n distinct = 1)
+
+Column that VARIES row to row: VIOLATION CODE has 12 distinct values across the 24 rows.
+    VIOLATION CODE sequence: ['08A', '08A', '10B', '10B', '04L', '04L', '06C', '04M', '06C', '04M', '10E', '10E', '05D', '05D', '10F', '10F', '09C', '09C', '03A', '03A', '02G', '02G', '28-06', '28-06']
+
+=> CAMIS/DATE/SCORE/GRADE/INSPECTION TYPE are constant while VIOLATION
+   CODE differs: grain is one row per violation, not per inspection.
+
+Of 84,635 real inspections, 72,583 (85.8%) span more than one row.
+
+>>>>> STEP 2.3 — Missingness for key columns
+(% of 296,393 rows that are blank/empty)
+
+  CAMIS             : 0 (0.0%) missing
+  INSPECTION DATE   : 0 (0.0%) missing
+  BORO              : 0 (0.0%) missing
+  ZIPCODE           : 3,090 (1.0%) missing
+  Latitude          : 1,660 (0.6%) missing
+  Longitude         : 1,660 (0.6%) missing
+  ACTION            : 3,434 (1.2%) missing
+  VIOLATION CODE    : 5,890 (2.0%) missing
+  CRITICAL FLAG     : 0 (0.0%) missing
+  SCORE             : 17,052 (5.8%) missing
+  GRADE             : 150,154 (50.7%) missing
+  GRADE DATE        : 160,187 (54.0%) missing
+  INSPECTION TYPE   : 3,434 (1.2%) missing
+
+>>>>> STEP 2.4 — Distinct values & frequencies (categorical keys)
+
+BORO — 6 distinct values:
+         109,823 (37.1%)  Manhattan
+          75,332 (25.4%)  Brooklyn
+          73,865 (24.9%)  Queens
+           27,244 (9.2%)  Bronx
+            9,766 (3.3%)  Staten Island
+              363 (0.1%)  0
+
+ACTION — 6 distinct values:
+         276,909 (93.4%)  Violations were cited in the following area(s).
+           10,650 (3.6%)  Establishment Closed by DOHMH. Violations were cited in the foll...
+            3,434 (1.2%)  <blank>
+            2,397 (0.8%)  No violations were recorded at the time of this inspection.
+            1,722 (0.6%)  Establishment re-opened by DOHMH.
+            1,281 (0.4%)  Establishment re-closed by DOHMH.
+
+CRITICAL FLAG — 3 distinct values:
+         155,798 (52.6%)  Critical
+         132,823 (44.8%)  Not Critical
+            7,772 (2.6%)  Not Applicable
+
+GRADE — 7 distinct values:
+         150,154 (50.7%)  <blank>
+          99,100 (33.4%)  A
+           18,415 (6.2%)  B
+           13,479 (4.5%)  C
+           10,039 (3.4%)  N
+            4,354 (1.5%)  Z
+              852 (0.3%)  P
+
+INSPECTION TYPE — 38 distinct values (showing top 20):
+         156,288 (52.7%)  Cycle Inspection / Initial Inspection
+          58,443 (19.7%)  Cycle Inspection / Re-inspection
+          41,697 (14.1%)  Pre-permit (Operational) / Initial Inspection
+           10,768 (3.6%)  Pre-permit (Operational) / Re-inspection
+            9,558 (3.2%)  Administrative Miscellaneous / Initial Inspection
+            3,639 (1.2%)  Pre-permit (Non-operational) / Initial Inspection
+            3,434 (1.2%)  <blank>
+            2,550 (0.9%)  Cycle Inspection / Reopening Inspection
+            1,890 (0.6%)  Pre-permit (Operational) / Compliance Inspection
+            1,840 (0.6%)  Administrative Miscellaneous / Re-inspection
+            1,278 (0.4%)  Cycle Inspection / Compliance Inspection
+              987 (0.3%)  Inter-Agency Task Force / Initial Inspection
+              900 (0.3%)  Pre-permit (Operational) / Reopening Inspection
+              678 (0.2%)  Smoke-Free Air Act / Initial Inspection
+              491 (0.2%)  Pre-permit (Non-operational) / Re-inspection
+              489 (0.2%)  Calorie Posting / Initial Inspection
+              458 (0.2%)  Trans Fat / Initial Inspection
+              202 (0.1%)  Pre-permit (Operational) / Second Compliance Inspection
+              149 (0.1%)  Administrative Miscellaneous / Compliance Inspection
+               96 (0.0%)  Sodium Warning / Initial Inspection
+
+>>>>> STEP 2.5 — Date range, distinct restaurants, distinct inspections
+INSPECTION DATE range (excluding 01/01/1900 placeholder):
+    earliest: 2007-08-10 00:00:00
+    latest:   2026-05-27 00:00:00
+
+Distinct restaurants (unique CAMIS): 31,107
+Distinct inspections (CAMIS + INSPECTION DATE): 88,069
+    ...excluding 01/01/1900 placeholder: 84,635
+
+>>>>> STEP 2.6 — Quantify the known traps
+INSPECTION DATE = 01/01/1900: 3,434 (1.2%)
+    ...covering 3,434 distinct CAMIS (registered, never inspected).
+
+Blank GRADE: 150,154 (50.7%)
+
+BORO missing ('0', blank, or 'Missing'): 363 (0.1%)
+
+Latitude missing (blank or 0): 4,703 (1.6%)
+
+Longitude missing (blank or 0): 4,703 (1.6%)
+
+>>>>> STEP 3(a) — Re-inspection SPEED feasibility
+Need: do restaurants reliably have MULTIPLE inspections over time, so a
+gap between them can be measured? Distribution of distinct inspection
+DATES per restaurant (CAMIS), excluding the 01/01/1900 placeholder:
+
+Inspections-per-restaurant (describe):
+     count: 27,673.00
+      mean: 3.06
+       std: 1.51
+       min: 1.00
+       25%: 2.00
+       50%: 3.00
+       75%: 4.00
+       90%: 5.00
+       95%: 6.00
+       max: 15.00
+
+Restaurants by number of inspections (binned):
+         1 inspection(s): 4,258 (15.4%) of restaurants
+         2 inspection(s): 5,743 (20.8%) of restaurants
+         3 inspection(s): 8,742 (31.6%) of restaurants
+       4-5 inspection(s): 7,302 (26.4%) of restaurants
+      6-10 inspection(s): 1,598 (5.8%) of restaurants
+     11-20 inspection(s): 30 (0.1%) of restaurants
+       21+ inspection(s): 0 (0.0%) of restaurants
+
+Restaurants with >= 2 inspections (needed to measure a gap): 23,415 (84.6%)
+
+>>>>> STEP 3(b) — Failing-grade CONSEQUENCES feasibility
+Need: can outcomes after a bad result (re-inspected / closed / improved)
+be cleanly derived from ACTION and GRADE? Distributions below.
+
+ACTION — full distinct values & frequencies:
+         276,909 (93.4%)  Violations were cited in the following area(s).
+           10,650 (3.6%)  Establishment Closed by DOHMH. Violations were cited in the following area(s) and those requiring immediate action were addressed.
+            3,434 (1.2%)  <blank>
+            2,397 (0.8%)  No violations were recorded at the time of this inspection.
+            1,722 (0.6%)  Establishment re-opened by DOHMH.
+            1,281 (0.4%)  Establishment re-closed by DOHMH.
+
+GRADE — full distinct values & frequencies:
+         150,154 (50.7%)  <blank>
+          99,100 (33.4%)  A
+           18,415 (6.2%)  B
+           13,479 (4.5%)  C
+           10,039 (3.4%)  N
+            4,354 (1.5%)  Z
+              852 (0.3%)  P
+
+Distinct inspections graded 'C': 2,331 (of 88,734 real inspections). These would anchor angle (b).
