@@ -1,0 +1,3 @@
+﻿python: Python 3.12.7
+git: git version 2.47.1.windows.1
+geopandas: Traceback (most recent call last):   File "<string>", line 1, in <module> ModuleNotFoundError: No module named 'geopandas'

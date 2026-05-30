@@ -1,0 +1,8 @@
+# Core data work (Phase 1: profiling)
+pandas>=2.2
+numpy>=1.26
+
+# Geospatial — needed LATER for the district/neighborhood mapping stage.
+# Not used yet in Phase 1 profiling. Install when we reach mapping:
+#   pip install geopandas
+# geopandas>=1.0
