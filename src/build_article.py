@@ -788,6 +788,16 @@ h1 {
   font-family: "Inter", system-ui, sans-serif;
   font-size: 13px; color: var(--ink-dim); margin-top: 22px;
 }
+.byline .author { color: var(--ink); }
+.byline .author strong { font-weight: 600; }
+.byline .sep { color: var(--rule); margin: 0 6px; }
+.byline a {
+  color: var(--accent); text-decoration: none;
+  border-bottom: 1px solid rgba(192,57,43,0.3);
+  transition: border-color 0.15s ease;
+}
+.byline a:hover { border-bottom-color: var(--accent); }
+.byline .source { margin-top: 6px; font-size: 12.5px; opacity: 0.85; }
 h2 {
   font-size: 28px; line-height: 1.2; font-weight: 700;
   margin: 64px 0 18px 0; letter-spacing: -0.005em;
@@ -859,7 +869,7 @@ def render(stats: dict, charts: dict) -> str:
       <article class="container">
 
         <header>
-          <div class="eyebrow">A Data Case Study · NYC Department of Health</div>
+          <div class="eyebrow">A Data Case Study</div>
           <h1>The Quiet Math of New York's Restaurant Inspections</h1>
           <p class="deck">
             What <strong>{s['n_inspections']:,}</strong> health inspections in
@@ -867,7 +877,16 @@ def render(stats: dict, charts: dict) -> str:
             about pests, plumbing, and what actually gets a kitchen shut down.
           </p>
           <div class="byline">
-            Based on the NYC Department of Health's published inspection records.
+            <div class="author">
+              By <strong>Fahim Ahamed</strong>
+              <span class="sep">·</span>
+              <a href="https://www.linkedin.com/in/f-a-tonmoy/" target="_blank" rel="noopener">LinkedIn</a>
+              <span class="sep">·</span>
+              <a href="https://f-a-tonmoy.github.io/" target="_blank" rel="noopener">Portfolio</a>
+            </div>
+            <div class="source">
+              Data: NYC Department of Health published inspection records.
+            </div>
           </div>
         </header>
 
