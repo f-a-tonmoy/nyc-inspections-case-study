@@ -35,12 +35,21 @@ src/
   download_data.py      Step 1: pull the raw CSV into data/raw/
   profile_data.py       Step 2-3: profile + assess two analytical angles
   build_inspections.py  Step 4: collapse violations -> one row per inspection
+  build_article.py      Step 5: compute findings + render the case-study HTML
 notebooks/
   01_visual_overview.ipynb   Visual companion to the profile report
 reports/
+  article.html               THE CASE STUDY (open in any browser)
   profile_report.txt         Text profile written by profile_data.py
+  source_notes.md            Official dataset description + annotated implications
   figures/                   PNGs exported from the notebook
 ```
+
+## The case study
+
+`reports/article.html` is the final deliverable — a standalone article titled
+**"Same inspection, different outcome"** with three findings and four
+interactive Plotly charts. Open it in any browser; no server required.
 
 ## How to run (top to bottom, reproducible)
 
