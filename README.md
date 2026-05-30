@@ -32,8 +32,9 @@ data/
   raw/        raw CSV from NYC Open Data (git-ignored, re-downloadable)
   processed/  derived/intermediate files (git-ignored)
 src/
-  download_data.py   Step 1: pull the raw CSV into data/raw/
-  profile_data.py    Step 2-3: profile + assess two analytical angles
+  download_data.py      Step 1: pull the raw CSV into data/raw/
+  profile_data.py       Step 2-3: profile + assess two analytical angles
+  build_inspections.py  Step 4: collapse violations -> one row per inspection
 notebooks/
   01_visual_overview.ipynb   Visual companion to the profile report
 reports/
@@ -44,10 +45,28 @@ reports/
 ## How to run (top to bottom, reproducible)
 
 ```bash
-conda run -n intro_ds python src/download_data.py     # downloads to data/raw/
-conda run -n intro_ds python src/profile_data.py      # writes reports/profile_report.txt
+conda run -n intro_ds python src/download_data.py      # downloads to data/raw/
+conda run -n intro_ds python src/profile_data.py       # writes reports/profile_report.txt
+conda run -n intro_ds python src/build_inspections.py  # writes data/processed/inspections.parquet
 conda run -n intro_ds jupyter lab notebooks/01_visual_overview.ipynb
 ```
+
+## The inspection-grain table
+
+`build_inspections.py` produces **`data/processed/inspections.parquet`** —
+one row per `(camis, inspection_date)`, 84,635 rows × 28 columns, ~3.8 MB.
+This is the canonical analytical table; every downstream step reads it
+(not the raw CSV). The companion 200-row `inspections_sample.csv` is a
+human-eyeball preview.
+
+Key derived columns added on top of the raw fields:
+- `n_violations`, `n_critical` — distinct violation codes (exact-duplicate
+  rows in the raw file are deduped before counting).
+- `closed`, `reopened`, `reclosed` — boolean flags derived from `action`.
+- `score`, `latitude`, `longitude` — typed (lat/long `0` → `NaN`).
+- `inspection_date`, `grade_date` — parsed dates.
+- `boro`, `action`, `grade`, `inspection_type`, `cuisine_description` —
+  pandas categoricals (saves space and pins valid values).
 
 ## Notes on the data (DOHMH conventions)
 
