@@ -12,6 +12,9 @@ venv/
 env/
 .ipynb_checkpoints/
 
+# Notebook outputs are KEPT (notebooks/*.ipynb are tracked so the executed
+# figures are visible on GitHub without re-running the env).
+
 # ---- OS / editor cruft ----
 .DS_Store
 Thumbs.db
