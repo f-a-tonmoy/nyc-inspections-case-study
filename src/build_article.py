@@ -313,7 +313,10 @@ def chart_vermin(by_boro: pd.DataFrame, city_pct: float) -> go.Figure:
     ))
     fig.update_xaxes(title="% of inspections", range=[0, max(s['pct'].max()*1.18, 40)],
                      showgrid=True, gridcolor=RULE)
-    fig.update_yaxes(title="")
+    # Invisible tick marks add breathing room between the y-axis labels
+    # ("Bronx", "Brooklyn", ...) and the start of each bar.
+    fig.update_yaxes(title="", ticks="outside", ticklen=8,
+                     tickcolor="rgba(0,0,0,0)")
     return fig
 
 
@@ -382,7 +385,10 @@ def chart_cliff(baseline: float, agg: pd.DataFrame) -> go.Figure:
     fig.update_xaxes(title="closure rate when the code is present (%)",
                      range=[0, agg["closure_pct"].max() * 1.18],
                      showgrid=True, gridcolor=RULE)
-    fig.update_yaxes(title="")
+    # Invisible tick marks add breathing room between the y-axis labels
+    # and the start of each bar.
+    fig.update_yaxes(title="", ticks="outside", ticklen=8,
+                     tickcolor="rgba(0,0,0,0)")
     return fig
 
 
@@ -550,7 +556,7 @@ def chart_cuisine_concentration(dense: pd.DataFrame, panel: pd.DataFrame) -> go.
         # Pizza is the "everywhere" reference and gets the smallest, dimmest
         # dots so it doesn't drown out the five clustered cuisines visually.
         is_pizza = (cuisine == "Pizza")
-        marker_size = 4 if is_pizza else 7
+        marker_size = 5 if is_pizza else 7
         opacity = 0.25 if is_pizza else 0.78
 
         try:
@@ -1107,7 +1113,10 @@ def chart_reinspection_by_cuisine(by_cuisine: pd.DataFrame,
     fig.update_xaxes(title="% of cycle-inspected restaurants re-inspected",
                      range=[0, panel["pct"].max(skipna=True) * 1.12],
                      showgrid=True, gridcolor=RULE)
-    fig.update_yaxes(title="")
+    # Invisible tick marks add breathing room between the y-axis cuisine
+    # labels and the start of each bar.
+    fig.update_yaxes(title="", ticks="outside", ticklen=8,
+                     tickcolor="rgba(0,0,0,0)")
     return fig
 
 
@@ -2008,8 +2017,9 @@ def render(stats: dict, charts: dict) -> str:
           every inspection, every closure. Roughly
           <strong>{s['n_inspections']:,}</strong> inspections of
           <strong>{s['n_restaurants']:,}</strong> active restaurants sit in
-          the file, every deli and wedding venue and late-night halal cart
-          with a permit, each one a snapshot of a kitchen on a particular day.
+          the file, every deli, wedding venue, rooftop bar, and late-night
+          halal cart with a permit, each one a snapshot of a kitchen on a
+          particular day.
         </p>
 
         <p>
@@ -2140,8 +2150,9 @@ def render(stats: dict, charts: dict) -> str:
           A handful of recognizable names appear in the data at the catastrophic
           end of the spectrum. A <em class="stat">Le Pain Quotidien</em>
           location in Manhattan posted a score of 168 in July 2023 with a
-          sewage citation. A Manhattan <em class="stat">% Arabica</em> hit 163
-          in March 2026 under the same code. A Brooklyn restaurant recorded
+          sewage citation. A Manhattan coffee chain called
+          <em class="stat">% Arabica</em> hit 163 in March 2026 for the
+          same sewage code. A Brooklyn restaurant recorded
           a catastrophic <em class="stat">200</em> in April 2026, with
           eighteen violations,
           eleven of them critical, and sewage among them. Each of these
@@ -2217,7 +2228,8 @@ def render(stats: dict, charts: dict) -> str:
           landing at 14. The data can't say whether this reflects
           restaurants cleaning up just enough or inspectors rounding
           marginal cases to the safe side of the line. Most likely both.
-          Either way, the A is a target, not a description.
+          Either way, the A is what the system produces, not what it
+          measures.
         </p>
 
         <h2 id="sec-04"><span class="num">04</span>Most kitchens bounce back.</h2>
@@ -2243,9 +2255,8 @@ def render(stats: dict, charts: dict) -> str:
           <em class="stat">{s['median_drop']:.0f}</em> points in about two
           months, from <em class="stat">{s['median_initial']:.0f}</em> down
           to <em class="stat">{s['median_reinsp']:.0f}</em>, the highest
-          score that still earns an A. More than half
-          (<em class="stat">{s['pct_recover_A']:.0f}%</em>) recover to an A
-          on the next visit.
+          score that still earns an A. More than half recover to an A on
+          the next visit.
         </p>
 
         <figure class="grow-up">
@@ -2518,16 +2529,19 @@ def render(stats: dict, charts: dict) -> str:
             </li>
             <li>
               <strong>Most failed kitchens recover.</strong>
-              After a C-zone failure, the median score drops
-              <em class="stat">{s['median_drop']:.0f}</em> points in about
-              two months; <em class="stat">{s['pct_recover_A']:.0f}%</em> are
-              back to an A on the very next visit.
+              After a C-zone failure (score 28 or above), the median score
+              drops <em class="stat">{s['median_drop']:.0f}</em> points in
+              about two months; <em class="stat">{s['pct_recover_A']:.0f}%</em>
+              are back to an A on the very next visit. (That's the
+              bounce-back rate from severe failures, distinct from the
+              <em class="stat">{s['reinspect_overall_pct']:.0f}%</em>
+              re-inspection rate in section 7, which measures how often
+              any cycle inspection triggers a call-back.)
             </li>
             <li>
               <strong>NYC's food map is sliced into pockets.</strong> The
-              top 5 neighbourhoods for some cuisines hold over
-              <em class="stat">{s['conc_top5_max']:.0f}%</em> of all of
-              that cuisine's restaurants in the city. Universal cuisines
+              top 5 neighbourhoods for some cuisines hold over half of all
+              of that cuisine's restaurants in the city. Universal cuisines
               like <strong>Pizza</strong> spread across
               <em class="stat">{s['pizza_n_ntas']}</em> of the city's
               <em class="stat">{s['n_ntas_total']}</em> neighbourhoods,
