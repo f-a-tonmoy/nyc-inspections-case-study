@@ -1172,8 +1172,10 @@ def chart_seasonality(monthly: pd.DataFrame) -> go.Figure:
     fig.add_shape(type="rect",
                   x0=5.5, x1=8.5, y0=0, y1=1, yref="paper",
                   fillcolor="rgba(192,57,43,0.06)", line_width=0, layer="below")
-    fig.add_annotation(x=7, y=1.0, yref="paper",
-                       text="summer", showarrow=False, yshift=4,
+    # "summer" label sits just above the shaded rectangle's top edge —
+    # close enough that it reads as labeling the band, not floating free.
+    fig.add_annotation(x=7, y=1.0, yref="paper", yanchor="bottom",
+                       text="summer", showarrow=False, yshift=2,
                        font=dict(size=11, color=ACCENT))
 
     fig.add_trace(go.Scatter(
@@ -1868,6 +1870,11 @@ h2[id^="sec-"] { scroll-margin-top: 24px; }
   figure .chart .bars .point path,
   figure .chart .scatterlayer .trace .fills path,
   figure .chart .scatterlayer .trace .lines path { transform: none; }
+  /* Cancel the line-draw effect: lines render fully drawn immediately. */
+  figure .chart .scatterlayer .trace .lines path {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+  }
 }
 """
 
@@ -2646,11 +2653,51 @@ def render(stats: dict, charts: dict) -> str:
         // so a chart enters the trigger zone roughly when it reaches the
         // middle of the user's view.
 
-        // --- 1) Generic chart fade-in on scroll ---
+        // --- 1) Chart fade-in + line-draw on scroll ---
+        // When a chart enters view we (a) add .is-visible for CSS fade-in
+        // + bar-grow, and (b) for non-grow-up figures with SVG line traces,
+        // run a "line draw" stroke-dashoffset animation.
+        //
+        // Priming + animating in one callback (rather than priming once on
+        // load and triggering later) avoids the race we hit when a refresh
+        // restores scroll to §6: the observer would fire before priming
+        // finished, and lines stayed invisible. Now priming happens inline
+        // right before the animation, retrying if Plotly hasn't rendered.
+        function drawLines(chartEl, attemptsLeft) {{
+          if (typeof attemptsLeft === 'undefined') attemptsLeft = 12;
+          const fig = chartEl.closest('figure');
+          if (fig && fig.classList.contains('grow-up')) return;
+          const paths = chartEl.querySelectorAll(
+            '.scatterlayer .trace .lines path'
+          );
+          let anyAnimated = false;
+          paths.forEach(path => {{
+            if (path.dataset.linedrawDone) return;
+            const len = path.getTotalLength();
+            if (!len) return;
+            // Snap to invisible state with no transition, force a reflow,
+            // then enable transition + animate to fully-drawn.
+            path.style.transition = 'none';
+            path.style.strokeDasharray = len + 'px ' + len + 'px';
+            path.style.strokeDashoffset = len + 'px';
+            path.getBoundingClientRect();
+            path.style.transition =
+              'stroke-dashoffset 2s cubic-bezier(0.215, 0.61, 0.355, 1) 0.15s';
+            path.style.strokeDashoffset = '0px';
+            path.dataset.linedrawDone = '1';
+            anyAnimated = true;
+          }});
+          // No paths visible yet — Plotly probably still mounting. Retry.
+          if (!anyAnimated && attemptsLeft > 0 && !paths.length) {{
+            setTimeout(() => drawLines(chartEl, attemptsLeft - 1), 100);
+          }}
+        }}
+
         const observer = new IntersectionObserver((entries) => {{
           entries.forEach(entry => {{
             if (!entry.isIntersecting) return;
             entry.target.classList.add('is-visible');
+            drawLines(entry.target);
             observer.unobserve(entry.target);
           }});
         }}, {{ threshold: 0, rootMargin: '0px 0px -20% 0px' }});
