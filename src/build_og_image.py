@@ -8,9 +8,16 @@ Slack link previews, etc.). Run once after any title/byline change:
 
 Output: reports/og-image.png
 
-The PNG is referenced from article.html's <head> via the og:image meta
-tag, and is served alongside article.html when the repo is deployed to
-GitHub Pages.
+Design notes
+------------
+LinkedIn / Twitter compositors aggressively downscale the OG image to
+small thumbnails in compact preview modes. Anything light-grey or below
+~32pt becomes mush. This card uses:
+  * Solid dark text (no greys for secondary copy)
+  * 96pt title that fills the top half
+  * 38pt deck text, two lines max
+  * 28pt byline
+  * High-contrast monogram badge
 """
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -22,41 +29,52 @@ OUT = REPORTS / "og-image.png"
 # Canvas
 W, H = 1200, 630
 BG       = (251, 247, 240)   # warm off-white, matches article body
-INK      = (26, 26, 26)      # primary text (matches --ink)
-INK_DIM  = (102, 102, 102)   # secondary text (matches --ink-dim)
+INK      = (20, 20, 20)      # primary text, slightly darker than --ink
+SUBTLE   = (60, 60, 60)      # deck text — darker than --ink-dim for thumbnail legibility
 ACCENT   = (192, 57, 43)     # red accent (matches --accent)
-RULE     = (218, 218, 218)   # hairline rule color
+MONO_BG  = (20, 20, 20)      # dark badge background for FA monogram
 
 # Side padding
 PAD_L = 80
 PAD_R = 80
-PAD_T = 90
-PAD_B = 80
+PAD_T = 80
+PAD_B = 70
 
 
 def load_font(size: int, bold: bool = False, italic: bool = False):
-    """Best-effort font loader. Tries Source Serif Pro / Inter if installed
-    on the machine, falls back to Georgia / Arial / PIL default."""
-    candidates_serif = [
-        "SourceSerifPro-Bold.ttf" if bold else "SourceSerifPro-Regular.ttf",
-        "Georgia Bold.ttf" if bold else "Georgia.ttf",
-        "georgiab.ttf" if bold else "georgia.ttf",
-        "Times New Roman Bold.ttf" if bold else "Times New Roman.ttf",
-        "timesbd.ttf" if bold else "times.ttf",
+    """Best-effort font loader. Tries Source Serif Pro / Inter / Georgia
+    candidates in order, falls back to PIL default if nothing's found."""
+    candidates_serif_bold = [
+        "SourceSerifPro-Bold.ttf",
+        "Georgia Bold.ttf",
+        "georgiab.ttf",
+        "Times New Roman Bold.ttf",
+        "timesbd.ttf",
     ]
-    candidates_sans = [
-        "Inter-Bold.ttf" if bold else "Inter-Regular.ttf",
-        "Arial Bold.ttf" if bold else "Arial.ttf",
-        "arialbd.ttf" if bold else "arial.ttf",
+    candidates_serif_regular = [
+        "SourceSerifPro-Regular.ttf",
+        "Georgia.ttf",
+        "georgia.ttf",
+        "Times New Roman.ttf",
+        "times.ttf",
     ]
-    # Caller distinguishes serif via the `italic` flag here — keep it simple:
-    # we always try serif first (used for the title and deck), and the
-    # eyebrow + byline pass bold=True to get a bolder fallback weight.
-    candidates = candidates_serif if not italic else [
-        f.replace("Regular", "Italic").replace("Bold", "BoldItalic")
-        for f in candidates_serif
+    candidates_serif_italic = [
+        "SourceSerifPro-Italic.ttf",
+        "Georgia Italic.ttf",
+        "georgiai.ttf",
     ]
-    for name in candidates + candidates_sans:
+    candidates_sans_bold = [
+        "Inter-Bold.ttf",
+        "Arial Bold.ttf",
+        "arialbd.ttf",
+    ]
+    if italic:
+        candidates = candidates_serif_italic
+    elif bold:
+        candidates = candidates_serif_bold + candidates_sans_bold
+    else:
+        candidates = candidates_serif_regular
+    for name in candidates:
         try:
             return ImageFont.truetype(name, size)
         except (OSError, IOError):
@@ -85,65 +103,57 @@ def build_og_image():
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    # Top eyebrow: "A DATA-BACKED CASE STUDY" in red small-caps style
-    eyebrow_font = load_font(20, bold=True)
-    draw.text(
-        (PAD_L, PAD_T),
-        "A DATA-BACKED CASE STUDY",
-        fill=ACCENT, font=eyebrow_font,
-    )
-
-    # Main title — large serif bold
-    title_font = load_font(72, bold=True)
-    title_text = "The Quiet Math of NYC's Restaurant Inspections"
     max_text_w = W - PAD_L - PAD_R
+
+    # Top eyebrow: red, bold, larger than original.
+    eyebrow_font = load_font(26, bold=True)
+    eyebrow_text = "A DATA-BACKED CASE STUDY"
+    draw.text((PAD_L, PAD_T), eyebrow_text, fill=ACCENT, font=eyebrow_font)
+
+    # Main title — much larger serif, dark, 2 lines max.
+    title_font = load_font(82, bold=True)
+    title_text = "The Quiet Math of NYC's Restaurant Inspections"
     title_lines = wrap_text(draw, title_text, title_font, max_text_w)
-    title_y = PAD_T + 50
-    line_h = 84
+    title_y = PAD_T + 56
+    line_h = 94
     for line in title_lines:
         draw.text((PAD_L, title_y), line, fill=INK, font=title_font)
         title_y += line_h
 
-    # Thin red rule under the title
-    rule_y = title_y + 18
-    draw.rectangle([PAD_L, rule_y, PAD_L + 60, rule_y + 3], fill=ACCENT)
-
-    # Deck (italic medium serif, dim color)
-    deck_font = load_font(30, italic=True)
-    deck_text = ("What 83,354 health inspections in 27,350 active NYC "
-                 "restaurants reveal about pests, plumbing, and what "
-                 "actually gets a kitchen shut down.")
+    # Deck — bigger and DARKER than before so it survives thumbnail compression.
+    deck_font = load_font(34, bold=False)
+    deck_text = ("What 83,354 health inspections reveal about pests, "
+                 "plumbing, and what gets a kitchen shut down.")
     deck_lines = wrap_text(draw, deck_text, deck_font, max_text_w)
-    deck_y = rule_y + 32
-    deck_line_h = 42
+    deck_y = title_y + 18
+    deck_line_h = 46
     for line in deck_lines:
-        draw.text((PAD_L, deck_y), line, fill=INK_DIM, font=deck_font)
+        draw.text((PAD_L, deck_y), line, fill=SUBTLE, font=deck_font)
         deck_y += deck_line_h
 
-    # Byline at bottom
-    byline_font = load_font(22, bold=True)
+    # Byline at bottom-left — bigger, dark.
+    byline_font = load_font(36, bold=True)
     byline_text = "By Fahim Ahamed"
-    draw.text(
-        (PAD_L, H - PAD_B - 28),
-        byline_text,
-        fill=INK, font=byline_font,
-    )
+    byline_bbox = draw.textbbox((0, 0), byline_text, font=byline_font)
+    byline_h = byline_bbox[3] - byline_bbox[1]
+    byline_y = H - PAD_B - byline_h - 6
+    draw.text((PAD_L, byline_y), byline_text, fill=INK, font=byline_font)
 
-    # Subtle "FA" monogram in the bottom-right corner — mirrors the favicon.
-    mono_size = 56
+    # "FA" monogram badge bottom-right — matches the favicon, slightly larger.
+    mono_size = 70
     mono_x = W - PAD_R - mono_size
     mono_y = H - PAD_B - mono_size - 4
     draw.rounded_rectangle(
         [mono_x, mono_y, mono_x + mono_size, mono_y + mono_size],
-        radius=8, fill=INK,
+        radius=10, fill=MONO_BG,
     )
-    fa_font = load_font(26, bold=True)
+    fa_font = load_font(32, bold=True)
     fa_bbox = draw.textbbox((0, 0), "FA", font=fa_font)
     fa_w = fa_bbox[2] - fa_bbox[0]
     fa_h = fa_bbox[3] - fa_bbox[1]
     draw.text(
         (mono_x + (mono_size - fa_w) / 2,
-         mono_y + (mono_size - fa_h) / 2 - 4),
+         mono_y + (mono_size - fa_h) / 2 - 6),
         "FA",
         fill="white", font=fa_font,
     )

@@ -130,11 +130,38 @@ footer {
   font-family: "Inter", system-ui, sans-serif;
   font-size: 13px; color: var(--ink-dim); line-height: 1.55;
 }
+/* Standalone horizontal divider that floats above the element it's applied
+   to. Used to separate the "A note on reproducibility" callout from the
+   prose above it, mirroring the line that appears before the citations
+   footer. We use ::before instead of border-top because the .aside class
+   has its own background + padding, so a border-top would draw INSIDE the
+   callout's grey box rather than as a free-standing line. */
+.aside-divider {
+  position: relative;
+  margin-top: 72px;
+}
+.aside-divider::before {
+  content: "";
+  position: absolute;
+  top: -36px;
+  left: 0; right: 0;
+  height: 1px;
+  background: var(--rule);
+}
+/* When the footer directly follows an aside-divider, the footer's normal
+   72px top-margin stacks with the aside's bottom margin, leaving an
+   awkward gap above the citations divider. Tighten that. */
+.aside-divider + footer {
+  margin-top: 36px;
+}
 footer code { background: #eee; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 footer a { color: var(--accent); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
 footer h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
             color: var(--ink); margin: 18px 0 6px 0; font-weight: 700; }
+/* The first heading in the footer doesn't need an extra top margin — the
+   footer's padding-top already provides the gap below the divider line. */
+footer h3:first-child { margin-top: 0; }
 footer ol.citations { padding-left: 22px; margin: 0 0 8px 0; }
 footer ol.citations li { margin-bottom: 10px; scroll-margin-top: 24px; }
 footer ol.citations li:target {
@@ -1221,7 +1248,7 @@ h2[id^="sec-"] { scroll-margin-top: 24px; }
           the active roll.
         </p>
 
-        <p class="aside">
+        <p class="aside aside-divider">
           <strong>A note on reproducibility.</strong> DOHMH updates the
           inspection file daily, and because the published file is a
           rolling three-year window, old inspections drop off the back end
@@ -1301,9 +1328,13 @@ h2[id^="sec-"] { scroll-margin-top: 24px; }
         function armSectionNav() {
           const navLinks = document.querySelectorAll('.section-nav a');
           if (!navLinks.length) return;
-          const sections = Array.from(
-            document.querySelectorAll('article h2[id^="sec-"]'));
-          if (!sections.length) return;
+          // Track ALL article h2s (not just the numbered sec-* ones) so we
+          // can detect when the reader has scrolled past §8 into the
+          // "What this data cannot tell us" or citations footer area —
+          // those h2s have no sec-* id, so when one of them becomes the
+          // last-passed h2 we clear the nav (nothing to highlight).
+          const allH2s = Array.from(document.querySelectorAll('article h2'));
+          if (!allH2s.length) return;
 
           function updateActive() {
             // Near the top of the page: no section is "current" yet.
@@ -1312,13 +1343,19 @@ h2[id^="sec-"] { scroll-margin-top: 24px; }
               return;
             }
             const trigger = window.innerHeight * 0.35;
-            let active = sections[0];
-            for (const sec of sections) {
-              if (sec.getBoundingClientRect().top <= trigger) {
-                active = sec;
+            let active = null;
+            for (const h2 of allH2s) {
+              if (h2.getBoundingClientRect().top <= trigger) {
+                active = h2;
               } else {
                 break;
               }
+            }
+            // If the last-passed h2 isn't a numbered section, the reader is
+            // in the conclusion / "cannot tell us" / citations area. Clear.
+            if (!active || !active.id || !active.id.startsWith('sec-')) {
+              navLinks.forEach(link => link.classList.remove('active'));
+              return;
             }
             navLinks.forEach(link => {
               link.classList.toggle('active',
