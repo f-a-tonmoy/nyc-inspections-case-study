@@ -4,11 +4,9 @@ A data-backed case study of NYC's restaurant inspection program: what
 **83,354 inspections of 27,350 active restaurants** reveal about pests,
 plumbing, geography, and what actually gets a kitchen shut down.
 
-**By Fahim Ahamed** · [LinkedIn](https://www.linkedin.com/in/f-a-tonmoy/) · [Portfolio](https://f-a-tonmoy.github.io/)
-
 > **Live article:** **<https://f-a-tonmoy.github.io/nyc-inspections-case-study/>**
 
-[![Article preview](reports/og-image.png)](https://f-a-tonmoy.github.io/nyc-inspections-case-study/)
+[![A cliff right at the A/B boundary — NYC restaurant inspection scores pile up at 12 and 13, collapse at 14](reports/bunching-chart-hires.png)](https://f-a-tonmoy.github.io/nyc-inspections-case-study/)
 
 Built as a reproducible Python pipeline that profiles, analyses, and renders
 a single self-contained HTML article with interactive Plotly charts, scroll-
