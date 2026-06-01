@@ -2628,6 +2628,19 @@ def render(stats: dict, charts: dict) -> str:
               Used for the rolling three-year publishing window and the
               active-restaurants-only inclusion policy.
             </li>
+            <li id="cite-3">
+              Map tiles by
+              <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>,
+              under
+              <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.
+              Underlying map data ©
+              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>,
+              available under the
+              <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">Open Database License</a>.
+              See
+              <a href="https://www.openstreetmap.org/about/" target="_blank" rel="noopener">openstreetmap.org/about</a>
+              for more on the OSM project.
+            </li>
           </ol>
         </footer>
       <button class="back-to-top" aria-label="Back to top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})">↑</button>
@@ -2670,23 +2683,55 @@ def render(stats: dict, charts: dict) -> str:
           const paths = chartEl.querySelectorAll(
             '.scatterlayer .trace .lines path'
           );
+          // Sequencing: dots first, lines after.
+          //   Dots fade in left-to-right across DOT_STAGGER, starting at
+          //   DOT_DELAY. The line starts drawing once roughly half the
+          //   dots are visible — close enough behind that the line "chases"
+          //   the remaining dots into place.
+          const DOT_DELAY    = 0.15;
+          const DOT_STAGGER  = 0.9;
+          const DOT_FADE     = 0.25;
+          const LINE_DELAY   = DOT_DELAY + DOT_STAGGER / 2;   // 0.6s
+          const LINE_DURATION = 1.4;
+
+          // --- Step 1: dots fade in left-to-right ---
+          chartEl.querySelectorAll('.scatterlayer .trace').forEach(trace => {{
+            const markers = Array.from(trace.querySelectorAll('.points path'));
+            if (markers.length < 2) return;
+            markers.sort((a, b) =>
+              a.getBoundingClientRect().left - b.getBoundingClientRect().left
+            );
+            markers.forEach((m, i) => {{
+              if (m.dataset.markerDrawDone) return;
+              const progress = i / (markers.length - 1);
+              const delay = DOT_DELAY + DOT_STAGGER * progress;
+              m.style.transition = 'none';
+              m.style.opacity = '0';
+              m.getBoundingClientRect();
+              m.style.transition = 'opacity ' + DOT_FADE + 's ease-out ' + delay + 's';
+              m.style.opacity = '1';
+              m.dataset.markerDrawDone = '1';
+            }});
+          }});
+
+          // --- Step 2: lines draw after dots are placed ---
           let anyAnimated = false;
           paths.forEach(path => {{
             if (path.dataset.linedrawDone) return;
             const len = path.getTotalLength();
             if (!len) return;
-            // Snap to invisible state with no transition, force a reflow,
-            // then enable transition + animate to fully-drawn.
             path.style.transition = 'none';
             path.style.strokeDasharray = len + 'px ' + len + 'px';
             path.style.strokeDashoffset = len + 'px';
             path.getBoundingClientRect();
             path.style.transition =
-              'stroke-dashoffset 2s cubic-bezier(0.215, 0.61, 0.355, 1) 0.15s';
+              'stroke-dashoffset ' + LINE_DURATION +
+              's cubic-bezier(0.215, 0.61, 0.355, 1) ' + LINE_DELAY + 's';
             path.style.strokeDashoffset = '0px';
             path.dataset.linedrawDone = '1';
             anyAnimated = true;
           }});
+
           // No paths visible yet — Plotly probably still mounting. Retry.
           if (!anyAnimated && attemptsLeft > 0 && !paths.length) {{
             setTimeout(() => drawLines(chartEl, attemptsLeft - 1), 100);
