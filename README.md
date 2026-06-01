@@ -6,7 +6,7 @@ plumbing, geography, and what actually gets a kitchen shut down.
 
 **By Fahim Ahamed** · [LinkedIn](https://www.linkedin.com/in/f-a-tonmoy/) · [Portfolio](https://f-a-tonmoy.github.io/)
 
-> **Live article:** _(will be linked here once GitHub Pages is configured)_
+> **Live article:** **<https://f-a-tonmoy.github.io/nyc-inspections-case-study/>**
 
 Built as a reproducible Python pipeline that profiles, analyses, and renders
 a single self-contained HTML article with interactive Plotly charts. Source
