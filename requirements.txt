@@ -3,6 +3,10 @@ pandas>=2.2
 numpy>=1.26
 plotly>=5.20
 
+# Parquet I/O backend for pandas (data/processed/inspections.parquet).
+# pandas requires either pyarrow or fastparquet to read/write parquet.
+pyarrow>=14.0
+
 # Open Graph preview-image generator (src/build_og_image.py).
 # Pillow is small and widely available; falls back to system fonts.
 Pillow>=10.0

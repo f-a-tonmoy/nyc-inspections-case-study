@@ -2551,6 +2551,18 @@ def render(stats: dict, charts: dict) -> str:
           the active roll.
         </p>
 
+        <p class="aside">
+          <strong>A note on reproducibility.</strong> DOHMH updates the
+          inspection file daily, and because the published file is a
+          rolling three-year window, old inspections drop off the back end
+          while new ones are added at the front. Every figure and finding
+          in this article is computed from a snapshot taken in <strong>late
+          May 2026</strong>. Reproducing the build later, against a fresher
+          download, will yield numbers that are close but not identical to
+          the ones quoted here. The underlying patterns are stable; the
+          exact decimals are not.
+        </p>
+
         <footer>
           <h3>Citations</h3>
           <ol class="citations">
