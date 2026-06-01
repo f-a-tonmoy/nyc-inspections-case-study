@@ -1,94 +1,95 @@
-# NYC DOHMH Restaurant Inspections — Enforcement Equity Analysis
+# The Quiet Math of NYC's Restaurant Inspections
 
-A data-analysis portfolio project examining **how the City of New York inspects
-restaurants across neighborhoods** — an oversight / enforcement-equity lens,
-**not** a consumer "which restaurants are dirty" grade map.
+A data-driven case study of NYC's restaurant inspection program: what
+**~83,000 inspections of ~27,000 active restaurants** reveal about pests,
+plumbing, geography, and what actually gets a kitchen shut down.
 
-> Source: NYC Open Data — DOHMH New York City Restaurant Inspection Results
-> (dataset id `43nn-pn8j`).
+**By Fahim Ahamed** · [LinkedIn](https://www.linkedin.com/in/f-a-tonmoy/) · [Portfolio](https://f-a-tonmoy.github.io/)
 
-## Project status
+> **Live article:** _(will be linked here once GitHub Pages is configured)_
 
-**Phase 1 — Data understanding (current).** Honest profile of what the file
-contains: grain, coverage, missingness, and known traps. The analytical angle
-has **not** been chosen yet.
+Built as a reproducible Python pipeline that profiles, analyses, and renders
+a single self-contained HTML article with interactive Plotly charts. Source
+data: NYC Open Data dataset [`43nn-pn8j`](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j).
 
-## Environment
+## What's in the article
 
-This project uses the **`intro_ds`** conda environment (Python 3.12, pandas,
-numpy, matplotlib, seaborn, jupyter). All commands and the notebook kernel
-should run inside it.
+Seven numbered findings + intro + conclusion:
 
-```bash
-# one-time: register the kernel under the same name (so notebooks find it)
-conda run -n intro_ds python -m ipykernel install --user --name intro_ds \
-    --display-name "Python (intro_ds)"
-```
+1. **Vermin is everywhere** — 1 in 3 NYC inspections find evidence of mice, rats, roaches or flies
+2. **The closure cliff** — most violations don't shut a kitchen down; sewage codes do (~19× the baseline closure rate)
+3. **The 13-point ceiling** — inspection scores pile up just under the A/B grade boundary
+4. **Most kitchens bounce back** — after a failed inspection, 58% recover to an A on the next visit
+5. **NYC's food map is sliced into pockets** — five cultural cuisines plotted on an interactive city map
+6. **The summer effect** — closure rates jump in summer, hot-food violations drop
+7. **What an 'A' really means** — 96% of restaurants have been cited for at least one critical violation in the past three years
 
 ## Repo layout
 
 ```
 data/
-  raw/        raw CSV from NYC Open Data (git-ignored, re-downloadable)
-  processed/  derived/intermediate files (git-ignored)
+  README.md               how to download the raw CSV + geojson
+  raw/                    gitignored — populated by download_data.py
+  processed/              gitignored — produced by build_inspections.py
 src/
-  download_data.py      Step 1: pull the raw CSV into data/raw/
-  profile_data.py       Step 2-3: profile + assess two analytical angles
-  build_inspections.py  Step 4: collapse violations -> one row per inspection
-  build_article.py      Step 5: compute findings + render the case-study HTML
+  download_data.py        Step 1 — pull raw CSV into data/raw/
+  build_inspections.py    Step 2 — collapse violations to one row per inspection
+  build_article.py        Step 3 — compute findings + render article.html
 notebooks/
-  01_visual_overview.ipynb   Visual companion to the profile report
+  01_visual_overview.ipynb   initial visual profile (outputs baked in)
 reports/
-  article.html               THE CASE STUDY (open in any browser)
-  profile_report.txt         Text profile written by profile_data.py
-  source_notes.md            Official dataset description + annotated implications
-  figures/                   PNGs exported from the notebook
+  article.html            THE CASE STUDY — open in any browser
+  data_dictionary.md      column-by-column notes on the raw CSV
+  source_notes.md         official dataset description + annotated implications
+requirements.txt          minimal Python dependencies
 ```
 
-## The case study
+## How to reproduce
 
-`reports/article.html` is the final deliverable — a standalone article titled
-**"Same inspection, different outcome"** with three findings and four
-interactive Plotly charts. Open it in any browser; no server required.
-
-## How to run (top to bottom, reproducible)
+Requires Python 3.10+ and the packages in `requirements.txt`
+(pandas, numpy, plotly).
 
 ```bash
-conda run -n intro_ds python src/download_data.py      # downloads to data/raw/
-conda run -n intro_ds python src/profile_data.py       # writes reports/profile_report.txt
-conda run -n intro_ds python src/build_inspections.py  # writes data/processed/inspections.parquet
-conda run -n intro_ds jupyter lab notebooks/01_visual_overview.ipynb
+# 1. Set up a virtual environment (use whatever you like — venv, conda, uv, ...)
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# 2. Download the source data (see data/README.md for details)
+python src/download_data.py
+
+# 3. Build the analysis-ready table
+python src/build_inspections.py
+
+# 4. Render the article
+python src/build_article.py
+# -> writes reports/article.html
+
+# 5. Preview locally
+python -m http.server 8000 --directory reports
+# open http://localhost:8000/article.html
 ```
 
-## The inspection-grain table
+The article HTML is self-contained: all CSS is inline, Plotly loads from CDN,
+and there are no other local asset dependencies.
 
-`build_inspections.py` produces **`data/processed/inspections.parquet`** —
-one row per `(camis, inspection_date)`, 84,635 rows × 28 columns, ~3.8 MB.
-This is the canonical analytical table; every downstream step reads it
-(not the raw CSV). The companion 200-row `inspections_sample.csv` is a
-human-eyeball preview.
+## Key conventions in the data
 
-Key derived columns added on top of the raw fields:
-- `n_violations`, `n_critical` — distinct violation codes (exact-duplicate
-  rows in the raw file are deduped before counting).
-- `closed`, `reopened`, `reclosed` — boolean flags derived from `action`.
-- `score`, `latitude`, `longitude` — typed (lat/long `0` → `NaN`).
-- `inspection_date`, `grade_date` — parsed dates.
-- `boro`, `action`, `grade`, `inspection_type`, `cuisine_description` —
-  pandas categoricals (saves space and pins valid values).
-
-## Notes on the data (DOHMH conventions)
-
-- **Grain:** the file is **one row per violation**, so a single inspection
-  (one CAMIS on one date) spans multiple rows. Collapse to inspection grain
-  before any analysis.
 - **`SCORE`** is DOHMH's inspection metric where **higher = worse**. `GRADE`
-  (A/B/C) is derived by DOHMH from the score — we do **not** recompute it.
-- **`GRADE`** is blank ~51% of the time (re-inspections, pre-permit visits,
-  etc.). For severity, prefer `SCORE` and `ACTION` over the letter grade.
-- **`01/01/1900`** appears as `INSPECTION DATE` for restaurants that are
-  registered but have never been inspected — exclude when analyzing inspection
-  events.
-- **Temporal coverage:** despite a min date of 2007, the snapshot is
-  effectively a **rolling ~3-year window** — virtually all inspections fall in
-  2022 onwards (see `reports/figures/02_inspections_per_month.png`).
+  (A / B / C) is derived from the score by DOHMH; this pipeline never
+  recomputes it.
+- **Grain:** the raw CSV is **one row per violation**, so a single inspection
+  (one `CAMIS` on one date) spans multiple rows. `build_inspections.py`
+  collapses it to one row per `(camis, inspection_date)`.
+- **Coverage:** the published file is a **rolling ~3-year window** of active
+  restaurants. The pre-2022 records are a sparse tail (under 300/year through
+  2021); everything in the article uses inspections from mid-2022 onward.
+- **Active-status filter:** restaurants that permanently closed or lost their
+  permit drop out of the file entirely. The article's closure rates therefore
+  describe surviving restaurants only.
+
+## License
+
+The analysis code in this repository is released as-is for portfolio /
+educational use. The underlying inspection data is published by the City of
+New York under the [NYC Open Data terms of use](https://www.nyc.gov/home/terms-of-use.page).

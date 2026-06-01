@@ -1,8 +1,8 @@
-# Core data work (Phase 1: profiling)
+# Core data + chart pipeline
 pandas>=2.2
 numpy>=1.26
+plotly>=5.20
 
-# Geospatial — needed LATER for the district/neighborhood mapping stage.
-# Not used yet in Phase 1 profiling. Install when we reach mapping:
-#   pip install geopandas
-# geopandas>=1.0
+# Open Graph preview-image generator (src/build_og_image.py).
+# Pillow is small and widely available; falls back to system fonts.
+Pillow>=10.0

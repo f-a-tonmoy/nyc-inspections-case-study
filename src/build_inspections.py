@@ -10,7 +10,7 @@ Outputs:
     data/processed/inspections_sample.csv  200-row peek for eyeballing
 
 Run:
-    conda run -n intro_ds python src/build_inspections.py
+    python src/build_inspections.py
 
 Design choices (worth understanding):
 - The raw file contains EXACT duplicate violation rows (we observed an

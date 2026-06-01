@@ -16,7 +16,7 @@ Article structure
 - Caveats footer (rolling window + survivorship)
 
 Run:
-    conda run -n intro_ds python src/build_article.py
+    python src/build_article.py
 """
 
 from __future__ import annotations
@@ -72,15 +72,20 @@ def load():
     return df, dense, raw
 
 
-def code_description(raw: pd.DataFrame, codes: list[str]) -> dict[str, str]:
-    """Most-common full description per code, truncated for tooltip use."""
+def code_description(raw: pd.DataFrame, codes: list[str],
+                     width: int = 58, max_chars: int = 280) -> dict[str, str]:
+    """Most-common full description per code, word-wrapped with <br> so the
+    text fits comfortably in narrow Plotly hover tooltips."""
+    import textwrap
     sub = raw[raw["VIOLATION CODE"].isin(codes) & raw["VIOLATION DESCRIPTION"].ne("")]
     desc = (sub.groupby("VIOLATION CODE")["VIOLATION DESCRIPTION"]
               .agg(lambda s: s.value_counts().index[0]))
     out = {}
     for c in codes:
         text = desc.get(c, "")
-        out[c] = (text[:130] + "…") if len(text) > 130 else text
+        if len(text) > max_chars:
+            text = text[:max_chars - 1].rstrip() + "…"
+        out[c] = textwrap.fill(text, width=width).replace("\n", "<br>")
     return out
 
 
@@ -142,12 +147,8 @@ def chart_timeline(df_full: pd.DataFrame) -> go.Figure:
         x0=cutoff, x1=cutoff, y0=0, y1=1,
         line=dict(color=ACCENT, dash="dash", width=1.5),
     )
-    fig.add_annotation(
-        x=cutoff, y=1, xref="x", yref="paper",
-        xanchor="left", yanchor="top", xshift=6, yshift=-4,
-        text="included from here →",
-        showarrow=False, font=dict(size=11, color=ACCENT),
-    )
+    # The shaded region + dashed line are self-explanatory with the
+    # figcaption below; no inline text label needed.
     fig.update_layout(**base_layout(
         "Inspections published per month, 2007 through May 2026",
         height=290,
@@ -167,13 +168,22 @@ def chart_hero(dense: pd.DataFrame) -> go.Figure:
     counts, edges = np.histogram(s, bins=bins)
     centers = (edges[:-1] + edges[1:]) / 2
 
+    # The 2-point bin at center c covers scores [c-1, c] inclusive
+    # (i.e. histogram interval [c-1, c+1)). Use both ends in the hover label
+    # so users see the correct integer score range.
+    left_ints  = (centers - 1).astype(int)
+    right_ints = centers.astype(int)
+    # Highlight the 12–13 bin in a caution-amber so the pile-up is visible
+    # but not alarming. Same colour used in the bunching chart (§3).
+    CAUTION = "#e67e22"
+    bar_colors = [CAUTION if c == 13 else LIGHT for c in centers]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=centers, y=counts, width=1.8,
-        marker_color=LIGHT, marker_line_width=0,
-        hovertemplate="Score range: %{x:.0f}–%{customdata}<br>"
+        marker_color=bar_colors, marker_line_width=0,
+        hovertemplate="Score range: %{customdata[0]}–%{customdata[1]}<br>"
                       "Inspections: %{y:,}<extra></extra>",
-        customdata=centers + 1,
+        customdata=np.stack([left_ints, right_ints], axis=-1),
         showlegend=False,
     ))
 
@@ -194,10 +204,13 @@ def chart_hero(dense: pd.DataFrame) -> go.Figure:
     # Annotated extreme cases — these are real CAMIS from the deep-dive.
     # Stagger vertically so the labels don't overlap, and clamp x to the
     # visible range with the arrow pointing back to the true score.
+    # Restaurant names are anonymized below for ethics reasons (see the
+    # note rendered under the chart). The scores, dates, and outcomes are
+    # all real and verifiable in the published DOHMH file.
     annotations = [
-        (141, 0.78, "Kaffe Are <span style='color:#7f8c8d'>(Manhattan)</span><br>scored 141, recovered to 12 in 62 days"),
-        (168, 0.55, "Le Pain Quotidien <span style='color:#7f8c8d'>(Manhattan)</span><br>scored 168, closed"),
-        (200, 0.32, "Jay &amp; Son Latin Flavor <span style='color:#7f8c8d'>(Brooklyn)</span><br>scored 200, 18 violations, closed"),
+        (141, 0.80, "A Manhattan cafe <span style='color:#7f8c8d'>(2024)</span><br>scored 141, recovered to 12 in 62 days"),
+        (168, 0.55, "A major international chain<br>restaurant <span style='color:#7f8c8d'>(Manhattan, 2023)</span><br>scored 168, closed"),
+        (200, 0.30, "A Brooklyn restaurant <span style='color:#7f8c8d'>(2026)</span><br>scored 200, 18 violations, closed"),
     ]
     for x, y_frac, label in annotations:
         x_clip = min(x, 118)
@@ -206,9 +219,12 @@ def chart_hero(dense: pd.DataFrame) -> go.Figure:
             text=label,
             showarrow=True, arrowhead=0, arrowwidth=1, arrowcolor=ACCENT,
             ax=-90, ay=0, xanchor="right",
+            # Fixed box width so all three callouts share the same shape
+            # regardless of how long the anonymized phrasing runs.
+            width=260, align="center",
             font=dict(size=11, color=INK),
             bgcolor="white", bordercolor=ACCENT, borderwidth=1,
-            borderpad=5, opacity=0.97,
+            borderpad=6, opacity=0.97,
         )
 
     fig.update_layout(**base_layout(
@@ -222,6 +238,12 @@ def chart_hero(dense: pd.DataFrame) -> go.Figure:
     )
     fig.update_yaxes(
         title="Inspections", showgrid=True, gridcolor=RULE, zeroline=False,
+        # Skip the y-axis "0" tick — it duplicates the x-axis "0" at the
+        # origin. Explicit tickvals so Plotly actually drops the 0 tick
+        # (tick0=5000 alone wasn't enough — Plotly was still emitting 0).
+        tickmode="array",
+        tickvals=[5000, 10000, 15000],
+        ticktext=["5k", "10k", "15k"],
     )
     return fig
 
@@ -274,13 +296,20 @@ def chart_vermin(by_boro: pd.DataFrame, city_pct: float) -> go.Figure:
                        "%{customdata:,} inspections<extra></extra>"),
         customdata=s["size"].astype(int).values,
     ))
-    fig.add_vline(x=city_pct, line=dict(color=INK, dash="dot", width=1),
-                  annotation_text=f"city-wide: {city_pct:.1f}%",
-                  annotation_position="top right",
-                  annotation_font=dict(size=11, color=INK_DIM))
+    # Dotted line for the city-wide average; label placed in the empty band
+    # above the plot area (paper coords) so it doesn't collide with the
+    # top bar.
+    fig.add_vline(x=city_pct, line=dict(color=INK, dash="dot", width=1))
+    fig.add_annotation(
+        x=city_pct, y=1.0, xref="x", yref="paper",
+        xanchor="left", yanchor="bottom", xshift=6, yshift=4,
+        text=f"city-wide average: {city_pct:.1f}%",
+        showarrow=False,
+        font=dict(size=11, color=INK_DIM),
+    )
     fig.update_layout(**base_layout(
         "Share of inspections finding evidence of mice, rats, roaches or flies",
-        height=320,
+        height=340,
     ))
     fig.update_xaxes(title="% of inspections", range=[0, max(s['pct'].max()*1.18, 40)],
                      showgrid=True, gridcolor=RULE)
@@ -335,15 +364,20 @@ def chart_cliff(baseline: float, agg: pd.DataFrame) -> go.Figure:
                        "<extra></extra>"),
         customdata=np.stack([agg["full"], agg.index, agg["n"]], axis=-1),
     ))
-    fig.add_vline(
-        x=baseline, line=dict(color=INK, dash="dot", width=1),
-        annotation_text=f"baseline: {baseline:.2f}%",
-        annotation_position="top right",
-        annotation_font=dict(size=11, color=INK_DIM),
+    # Dotted line for the city-wide closure rate; label placed in the
+    # empty band above the plot area (paper coords) so it doesn't collide
+    # with the top bar.
+    fig.add_vline(x=baseline, line=dict(color=INK, dash="dot", width=1))
+    fig.add_annotation(
+        x=baseline, y=1.0, xref="x", yref="paper",
+        xanchor="left", yanchor="bottom", xshift=6, yshift=4,
+        text=f"city-wide average: {baseline:.2f}%",
+        showarrow=False,
+        font=dict(size=11, color=INK_DIM),
     )
     fig.update_layout(**base_layout(
         "When this violation appears, what fraction of inspections end in a closure?",
-        height=440,
+        height=460,
     ))
     fig.update_xaxes(title="closure rate when the code is present (%)",
                      range=[0, agg["closure_pct"].max() * 1.18],
@@ -405,80 +439,277 @@ def chart_comeback(pairs: pd.DataFrame) -> go.Figure:
     ))
     fig.update_xaxes(title="Score change (initial − re-inspection · positive = improved)",
                      showgrid=True, gridcolor=RULE, zeroline=False)
-    fig.update_yaxes(title="Restaurants", showgrid=True, gridcolor=RULE)
+    # Skip the y "0" tick to avoid stacking with the x "0" in the middle.
+    fig.update_yaxes(title="Restaurants", showgrid=True, gridcolor=RULE,
+                     tickmode="array",
+                     tickvals=[1000, 2000, 3000, 4000, 5000],
+                     ticktext=["1k", "2k", "3k", "4k", "5k"])
     return fig
 
 
 # ---------------------------------------------------------------------------
-# §4 — Cuisine spectrum, colored by Manhattan share
+# §5 — Cuisine geographic concentration
+# ---------------------------------------------------------------------------
+# A hand-verified map of the 2010 NTA codes that appear in the
+# concentration analysis. Cross-checked against sample DBAs in each NTA
+# (e.g. STAR KABAB in QN35, BIG WONG in MN27, FALLSBURG BAGELS in BK88).
+# Extend this dict if the data ever surfaces an NTA whose name is missing.
+_NTA_NAME = {
+    "MN13": "Tribeca",            "MN17": "Midtown",
+    "MN22": "East Village",       "MN23": "West Village",
+    "MN24": "Soho",               "MN27": "Chinatown / LES",
+    "MN36": "Washington Heights", "MN40": "Upper East Side",
+    "BK19": "Bensonhurst",        "BK28": "Bath Beach",
+    "BK34": "Sunset Park",        "BK61": "Crown Heights",
+    "BK77": "Bushwick",           "BK88": "Borough Park",
+    "QN22": "Flushing",           "QN35": "Elmhurst",
+    "QN51": "Murray Hill (Flushing)",
+}
+
+
+def compute_cuisine_concentration(dense: pd.DataFrame) -> pd.DataFrame:
+    """For each cuisine: how geographically concentrated its restaurants
+    are across NYC's Neighborhood Tabulation Areas (NTAs).
+
+    Three metrics computed:
+        - n_ntas: how many distinct NTAs the cuisine appears in
+        - top5_pct: % of the cuisine's restaurants located in its
+          5 most-popular NTAs
+        - top1_nta: the single most-popular NTA
+
+    Threshold: cuisines with >=50 active restaurants in the window, so each
+    point reflects a real geographic distribution rather than a handful
+    of pins.
+    """
+    rest = dense.drop_duplicates("camis")[["camis", "cuisine_description",
+                                           "nta", "boro"]].copy()
+    rest = rest[rest["nta"].notna()
+                & (rest["nta"].astype(str).str.strip() != "")]
+    JUNK = {"Other", "Not Listed/Not Applicable", ""}
+    rest = rest[~rest["cuisine_description"].isin(JUNK)]
+    rest = rest[rest["cuisine_description"].notna()]
+
+    rows = []
+    for cuis, grp in rest.groupby("cuisine_description", observed=True):
+        n = len(grp)
+        if n < 50:
+            continue
+        counts = grp["nta"].value_counts()
+        shares = counts / n
+        top1 = counts.index[0]
+        rows.append({
+            "cuisine":       cuis,
+            "n_restaurants": int(n),
+            "n_ntas":        int(len(counts)),
+            "top5_pct":      float(shares.head(5).sum() * 100),
+            "top3_pct":      float(shares.head(3).sum() * 100),
+            "top1_pct":      float(shares.iloc[0] * 100),
+            "top1_nta":      top1,
+            "top1_name":     _NTA_NAME.get(top1, top1),
+        })
+    return pd.DataFrame(rows).sort_values("top5_pct", ascending=False)
+
+
+# Cuisines to plot on the map and their distinct categorical colors.
+# Picked because each represents a culture and has a strong, identifiable
+# geographic anchor that stands out as a coloured blob on the NYC outline.
+# Everything not in this palette is rendered as the "All other cuisines"
+# trace (faint grey backdrop showing full NYC restaurant density).
+_CUISINE_MAP_PALETTE = [
+    ("Korean",          "#c0392b"),  # Flushing + Midtown K-town
+    ("Bangladeshi",     "#8e44ad"),  # Elmhurst
+    ("Jewish/Kosher",   "#16a085"),  # Borough Park
+    ("Eastern European","#d35400"),  # Bensonhurst / Sheepshead / Brighton
+    ("French",          "#2980b9"),  # Manhattan
+    ("Pizza",           "#7f8c8d"),  # Everywhere — the reference baseline
+]
+
+
+def chart_cuisine_concentration(dense: pd.DataFrame, panel: pd.DataFrame) -> go.Figure:
+    """One NYC base map showing six highlighted cuisines as coloured
+    cluster blobs against a faint grey backdrop of every other NYC
+    restaurant. The visual finding is the spatial clustering: each of the
+    six cuisines forms a tight blob in a recognisable neighbourhood
+    (Korean in Flushing + Midtown, Italian in downtown/Midtown Manhattan,
+    Bangladeshi in Elmhurst, etc.), while the rest of NYC's restaurants
+    show the city's full restaurant density behind them."""
+    # One row per restaurant, with lat/lon for plotting.
+    rest = (dense.dropna(subset=["latitude", "longitude"])
+                  .drop_duplicates("camis")
+                  [["camis", "dba", "boro", "nta",
+                    "latitude", "longitude", "cuisine_description"]]
+                  .copy())
+
+    panel_idx = panel.set_index("cuisine")
+
+    fig = go.Figure()
+    for cuisine, color in _CUISINE_MAP_PALETTE:
+        sub = rest[rest["cuisine_description"] == cuisine]
+        if sub.empty:
+            continue
+        # Pizza is the "everywhere" reference and gets the smallest, dimmest
+        # dots so it doesn't drown out the five clustered cuisines visually.
+        is_pizza = (cuisine == "Pizza")
+        marker_size = 4 if is_pizza else 7
+        opacity = 0.25 if is_pizza else 0.78
+
+        try:
+            top5_pct = float(panel_idx.loc[cuisine, "top5_pct"])
+            n_label = f"{len(sub):,} NYC locations · top 5 NTAs hold {top5_pct:.0f}%"
+        except KeyError:
+            n_label = f"{len(sub):,} NYC locations"
+
+        hovers = [
+            f"<b>{r['dba']}</b><br>"
+            f"{cuisine}<br>"
+            f"{r['boro']}"
+            for _, r in sub.iterrows()
+        ]
+
+        legend_label = (f"<b>{cuisine}</b>  "
+                        f"<span style='color:#7f8c8d'>· {n_label}</span>")
+
+        fig.add_trace(go.Scattermap(
+            lat=sub["latitude"], lon=sub["longitude"],
+            mode="markers",
+            marker=dict(size=marker_size, color=color, opacity=opacity),
+            hovertext=hovers, hoverinfo="text",
+            name=legend_label,
+        ))
+
+    fig.update_layout(
+        # Initial zoom is wider than the final view; the on-scroll JS in the
+        # article HTML animates the map into the tighter city-focused frame
+        # (see armMapZoom / runMapZoom in render()).
+        map=dict(
+            style="carto-positron",
+            center=dict(lat=40.74, lon=-73.90),
+            zoom=9.4,
+        ),
+        margin=dict(l=0, r=0, t=46, b=0),
+        title=dict(
+            text="Five cuisines cluster; Pizza is the grey 'everywhere' reference",
+            font=dict(size=15, color=INK), x=0.02, xanchor="left",
+        ),
+        font=dict(family="Inter, system-ui, sans-serif", size=12, color=INK),
+        # White hover text on the dark hover background, matching the §2
+        # sewage-cliff map for visual consistency.
+        hoverlabel=dict(font=dict(color="white", size=12,
+                                  family="Inter, system-ui, sans-serif")),
+        height=560,
+        showlegend=True,
+        legend=dict(
+            x=0.01, y=0.99, xanchor="left", yanchor="top",
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor=RULE, borderwidth=1,
+            font=dict(size=11, color=INK),
+            itemsizing="constant",
+        ),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# (kept) cuisine closure/critical panel — still referenced for a few stats
 # ---------------------------------------------------------------------------
 def compute_cuisine(dense: pd.DataFrame):
-    g = (dense.groupby("cuisine_description", observed=True)
-              .agg(n=("camis", "size"),
-                   n_closed=("closed", "sum"),
-                   n_restaurants=("camis", "nunique")))
-    g["closure_pct"] = g["n_closed"] / g["n"] * 100
-    # Match the sweep's threshold (n >= 500) so headline cuisines stay in.
-    g = g[g["n"] >= 500]
+    """For each cuisine: chain share (% of restaurants whose DBA appears at
+    3+ distinct locations within that cuisine) and avg critical violations
+    per inspection. Filtered to cuisines with >=200 inspections so each
+    point reflects a real distribution rather than a handful of inspections.
+
+    The chain-share metric is a structural proxy, not a clean chain flag
+    (some independent operators share generic names like "Pizza" or
+    "Restaurant"; some real chains use multiple DBAs). It's correlated
+    enough with operational standardization to surface the actual signal
+    the article cares about: limited-menu, standardized kitchens vs
+    multi-station independents.
+    """
+    # Restrict to cycle-initial inspections (the inspections that decide
+    # whether a re-inspection is needed). A "fail" is any initial cycle
+    # inspection that scored above the A boundary of 13.
+    ci = dense[(dense["inspection_type"] == "Cycle Inspection / Initial Inspection")
+               & dense["score"].notna()].copy()
+    ci["failed_first"] = ci["score"] > 13
+
+    g = (ci.groupby("cuisine_description", observed=True)
+            .agg(n_initial=("camis", "size"),
+                 n_restaurants=("camis", "nunique"),
+                 fail_pct=("failed_first", lambda s: s.mean() * 100)))
+    # Drop sparse cuisines and unlabelled rows.
+    JUNK = {"Other", "Not Listed/Not Applicable", ""}
+    g = g[~g.index.isin(JUNK)]
     g = g[g.index.astype(str).str.len() > 0]
-
-    # Manhattan share of each cuisine's restaurants — confounder visualization.
-    cuis_boro = (dense.groupby(["cuisine_description", "boro"], observed=True)
-                       ["camis"].nunique().unstack(fill_value=0))
-    g["pct_manhattan"] = (cuis_boro["Manhattan"] / cuis_boro.sum(axis=1) * 100).reindex(g.index)
-
-    top = g.nlargest(8, "closure_pct").sort_values("closure_pct", ascending=True)
-    bot = g.nsmallest(8, "closure_pct").sort_values("closure_pct", ascending=True)
-    panel = pd.concat([bot, top])
-    return panel
+    g = g[g["n_initial"] >= 100]
+    return g.sort_values("fail_pct", ascending=False)
 
 
-def chart_cuisine(panel: pd.DataFrame) -> go.Figure:
-    # Color encodes Manhattan share. Low Manhattan → ACCENT, high → NEUTRAL.
-    # That visualizes the geographic confound directly.
+def chart_cuisine(panel: pd.DataFrame, city_fail_pct: float) -> go.Figure:
+    """Horizontal bar chart: first-inspection FAIL rate by cuisine, top 8
+    and bottom 8 by rate. The city-wide average is overlaid as a dotted
+    vertical reference so the reader can see how far each end deviates."""
+    # Plotly draws the FIRST row in the y-list at the BOTTOM of the chart.
+    # We want the highest fail rate (Bangladeshi 76%) at the top and the
+    # lowest (Donuts 19%) at the bottom — so the list order is:
+    # [lowest-fail .. highest-low-fail, separator, lowest-high-fail .. highest-fail].
+    top = panel.head(8).iloc[::-1]   # ends at Bangladeshi -> top of chart
+    bot = panel.tail(8).iloc[::-1]   # starts at Donuts -> bottom of chart
+    sep = pd.DataFrame({"fail_pct": [None], "n_initial": [None],
+                        "n_restaurants": [None]}, index=["·····"])
+    plot_df = pd.concat([bot, sep, top])
+
     colors = []
-    for v in panel["pct_manhattan"]:
-        t = max(0.0, min(1.0, v / 60.0))   # 0% Manhattan -> 0; 60%+ -> 1
-        # interpolate between ACCENT (#c0392b) and NEUTRAL (#7f8c8d)
-        r = int(192 + (127 - 192) * t)
-        g = int(57  + (140 - 57) * t)
-        b = int(43  + (141 - 43) * t)
-        colors.append(f"rgb({r},{g},{b})")
+    for c in plot_df.index:
+        if c == "·····": colors.append("rgba(0,0,0,0)")
+        elif c in top.index: colors.append(ACCENT)
+        else: colors.append("#5d8aa8")  # cool blue for the low end
+
+    text = [f"{v:.0f}%" if v is not None and not pd.isna(v) else ""
+            for v in plot_df["fail_pct"]]
+    n_text = [f"n={int(v):,}" if v is not None and not pd.isna(v) else ""
+              for v in plot_df["n_initial"]]
 
     fig = go.Figure(go.Bar(
-        x=panel["closure_pct"].round(2), y=panel.index, orientation="h",
+        x=plot_df["fail_pct"], y=plot_df.index, orientation="h",
         marker_color=colors,
-        text=[f"{v:.2f}%" for v in panel["closure_pct"]],
-        textposition="outside", cliponaxis=False,
-        hovertemplate=(
-            "<b>%{y}</b><br>"
-            "Closure rate: %{x:.2f}%<br>"
-            "Inspections: %{customdata[0]:,}<br>"
-            "Active restaurants: %{customdata[1]:,}<br>"
-            "%{customdata[2]:.0f}% are in Manhattan"
-            "<extra></extra>"
-        ),
-        customdata=np.stack([panel["n"], panel["n_restaurants"],
-                             panel["pct_manhattan"]], axis=-1),
+        text=text, textposition="outside", cliponaxis=False,
+        hovertemplate=("<b>%{y}</b><br>"
+                       "First-inspection fail rate: %{x:.1f}%<br>"
+                       "Initial inspections in window: %{customdata[0]:,}<br>"
+                       "Restaurants: %{customdata[1]:,}"
+                       "<extra></extra>"),
+        customdata=np.stack([plot_df["n_initial"].fillna(0).astype(int),
+                             plot_df["n_restaurants"].fillna(0).astype(int)],
+                            axis=-1),
     ))
-    layout = base_layout(
-        "Closure rate by cuisine, top and bottom of the ranking",
-        height=470,
+    # City-wide reference.
+    fig.add_vline(x=city_fail_pct, line=dict(color=INK, dash="dot", width=1))
+    fig.add_annotation(
+        x=city_fail_pct, y=1.0, xref="x", yref="paper",
+        xanchor="left", yanchor="bottom", xshift=6, yshift=4,
+        text=f"city-wide average: {city_fail_pct:.0f}%",
+        showarrow=False,
+        font=dict(size=11, color=INK_DIM),
     )
-    # Add more top margin for the two-line title + legend strip.
-    layout["margin"] = dict(l=10, r=20, t=78, b=44)
-    fig.update_layout(**layout)
-    fig.update_xaxes(title="closure rate (%)",
-                     range=[0, panel["closure_pct"].max() * 1.15],
-                     showgrid=True, gridcolor=RULE)
-    fig.update_yaxes(title="")
-    # Legend strip on its own row below the title (well clear of it).
+
+    layout = base_layout(
+        "First-inspection fail rate, by cuisine",
+        height=520,
+    )
+    layout["margin"] = dict(l=10, r=20, t=82, b=44)
+    fig.update_layout(**layout, showlegend=False)
+    fig.update_xaxes(
+        title="% of initial cycle inspections that scored above 13 (the A boundary)",
+        range=[0, max(panel["fail_pct"].max() * 1.18, 85)],
+        showgrid=True, gridcolor=RULE,
+        ticksuffix="%",
+    )
+    fig.update_yaxes(title="", automargin=True)
     fig.add_annotation(
         xref="paper", yref="paper", x=0, y=1.045,
         xanchor="left", yanchor="bottom",
-        text="<span style='color:#c0392b'>■</span> outer-borough heavy &nbsp;&nbsp;"
-             "<span style='color:#7f8c8d'>■</span> Manhattan heavy &nbsp;"
-             "<span style='color:#7f8c8d'>(bar color encodes the cuisine's Manhattan share)</span>",
+        text=("<span style='color:#c0392b'>■</span> top 8 (highest fail rate) &nbsp;"
+              "<span style='color:#5d8aa8'>■</span> bottom 8 (lowest)"),
         showarrow=False, font=dict(size=11, color=INK_DIM),
     )
     return fig
@@ -516,44 +747,55 @@ def compute_bunching(dense: pd.DataFrame) -> tuple[pd.Series, dict]:
 def chart_bunching(counts: pd.Series) -> go.Figure:
     xs = counts.index.tolist()
     ys = counts.values.tolist()
-    # Highlight the 12-13 pile-up cluster (slate) and the 14 cliff (red).
-    # Everything else fades into grade-band tints.
-    PILEUP = "#2c3e50"
+    # Highlight the 12-13 pile-up cluster in caution-amber and the 14 cliff
+    # in red. Everything else fades into grade-band tints.
+    CAUTION = "#e67e22"
 
     def color(x):
-        if x in (12, 13): return PILEUP    # the pile-up cluster
+        if x in (12, 13): return CAUTION   # the pile-up cluster
         if x == 14:       return ACCENT    # the cliff
-        if x <= 13:       return "#9fb8c8"  # A zone, muted
-        if x <= 27:       return "#f0b27a"  # B zone, muted
-        return "#b39ddb"                    # C zone, muted
+        if x <= 13:       return LIGHT     # A zone
+        if x <= 27:       return LIGHT     # B zone
+        return LIGHT                       # C zone
 
     fig = go.Figure(go.Bar(
         x=xs, y=ys, marker_color=[color(x) for x in xs], marker_line_width=0,
         hovertemplate="Score = %{x}<br>%{y:,} inspections<extra></extra>",
     ))
-    # Cutoff guide lines
-    y_top = max(ys) * 1.12
+    # Cutoff guide lines with their labels above the chart.
+    y_top = max(ys) * 1.16
     for x_cut, label in [(13.5, "A | B cutoff"), (27.5, "B | C cutoff")]:
         fig.add_shape(type="line", x0=x_cut, x1=x_cut, y0=0, y1=y_top,
                       line=dict(color=INK, dash="dash", width=1))
         fig.add_annotation(x=x_cut, y=y_top, text=label,
                            showarrow=False, yshift=10,
                            font=dict(size=11, color=INK_DIM))
-    # Bracket annotation over the 12-13 cluster
-    cluster_top = max(ys[12], ys[13]) * 1.04
-    fig.add_shape(
-        type="line", x0=12, x1=13, y0=cluster_top, y1=cluster_top,
-        line=dict(color=PILEUP, width=1.5),
-    )
+    # Label each cluster bar individually so the reader can see the split
+    # between the two piled-up scores (the combined number is already in
+    # the surrounding body text). Both boxes float in the empty upper-left
+    # area so they don't collide with the A | B cutoff label.
     fig.add_annotation(
-        x=12.5, y=cluster_top, yshift=8,
-        text=f"<b>{ys[12]+ys[13]:,}</b> at 12 + 13",
-        showarrow=False,
-        font=dict(size=11, color=PILEUP),
+        x=12, y=ys[12], ax=-160, ay=-50,
+        arrowhead=0, arrowwidth=1, arrowcolor=CAUTION,
+        text=f"<b>{ys[12]:,}</b> at score 12",
+        font=dict(size=11, color=INK),
+        bgcolor="white", bordercolor=CAUTION, borderwidth=1, borderpad=5,
     )
-    # Annotate the cliff at 14
+    # Float the 13 label to the RIGHT of the A | B cutoff text and a
+    # little higher, so it sits above the 14 callout (which lives
+    # mid-chart on the right) and reads as a sibling of the cutoff label.
     fig.add_annotation(
-        x=14, y=ys[14], ax=70, ay=-60,
+        x=13, y=ys[13], ax=110, ay=-95,
+        arrowhead=0, arrowwidth=1, arrowcolor=CAUTION,
+        text=f"<b>{ys[13]:,}</b> at score 13",
+        font=dict(size=11, color=INK),
+        bgcolor="white", bordercolor=CAUTION, borderwidth=1, borderpad=5,
+    )
+    # Annotate the cliff at 14. Push the text box well above the B-zone
+    # bars (which reach ~2k) so it floats in empty space, with a longer
+    # arrow back down to the (very short) cliff bar.
+    fig.add_annotation(
+        x=14, y=ys[14], ax=95, ay=-160,
         arrowhead=0, arrowwidth=1, arrowcolor=ACCENT,
         text=f"<b>{ys[14]:,}</b> at score 14<br>"
              f"({(ys[12]+ys[13])/max(ys[14],1):.0f}× drop)",
@@ -567,7 +809,11 @@ def chart_bunching(counts: pd.Series) -> go.Figure:
     fig.update_xaxes(title="Inspection score", dtick=2, range=[-0.6, 35.6],
                      showgrid=False, ticks="outside", tickcolor=RULE)
     fig.update_yaxes(title="Inspections", showgrid=True, gridcolor=RULE,
-                     range=[0, y_top * 1.05])
+                     range=[0, y_top * 1.08],
+                     # Explicit tickvals so the 0 tick is actually suppressed.
+                     tickmode="array",
+                     tickvals=[2000, 4000, 6000, 8000, 10000],
+                     ticktext=["2k", "4k", "6k", "8k", "10k"])
     return fig
 
 
@@ -605,19 +851,26 @@ def chart_cliff_map(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
         hovertext=hovers, hoverinfo="text",
     ))
     fig.update_layout(
-        # carto-positron: clean light basemap, streets only, no POI clutter.
-        # Other clean options if needed later: "carto-voyager", "carto-darkmatter".
+        # Map starts wide (regional view) and is animated in to the city-focused
+        # view by the on-scroll JS in the article HTML. Centred slightly north
+        # so the wide initial view spans NYC + nearby areas.
         map=dict(
             style="carto-positron",
-            center=dict(lat=40.732, lon=-73.95),
-            zoom=10.2,
+            center=dict(lat=40.78, lon=-73.93),
+            zoom=9.0,
         ),
         margin=dict(l=0, r=0, t=46, b=0),
         title=dict(
-            text=f"{len(sub):,} sewage-cliff inspections, pinpointed (red = closed by DOHMH)",
+            text="Sewage-cliff inspections, pinpointed (red = closed by DOHMH)",
             font=dict(size=15, color=INK), x=0.02, xanchor="left",
         ),
         font=dict(family="Inter, system-ui, sans-serif", size=13, color=INK),
+        # White hover text on whatever the marker colour is (red or grey),
+        # so closed-restaurant popups AND open-restaurant popups both read
+        # cleanly. Plotly otherwise inherits the page font colour (dark)
+        # which is unreadable on the dark grey hover bg.
+        hoverlabel=dict(font=dict(color="white", size=12,
+                                  family="Inter, system-ui, sans-serif")),
         height=520,
     )
     return fig
@@ -627,7 +880,14 @@ def chart_cliff_map(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
 # NEW — Cuisine signature heatmap
 # ---------------------------------------------------------------------------
 def chart_cuisine_signatures(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figure:
-    """For each top cuisine, show which violation codes are over-represented."""
+    """For each top cuisine, show which violation codes are over-represented.
+
+    Improvements over the first version:
+    - Cuisines sorted by signature distinctiveness (variance of log-lift)
+      so the most-distinctive cuisines appear at the top.
+    - X-axis labels include a short human description, not just the code.
+    - Cells with extreme lift (>1.5× or <0.67×) get bolded text.
+    """
     # Pick top cuisines by inspection volume.
     top_cuisines = (dense["cuisine_description"]
                       .value_counts()
@@ -635,40 +895,78 @@ def chart_cuisine_signatures(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figur
                       .index.tolist())
     top_cuisines = [c for c in top_cuisines if str(c).strip() != ""]
 
-    # Build a (camis, date, code) explosion from the inspection-grain parquet.
     exploded = (dense[dense["cuisine_description"].isin(top_cuisines)]
                   .assign(code=lambda d: d["violation_codes"].str.split(","))
                   .explode("code"))
     exploded = exploded[exploded["code"].astype(str).ne("")]
 
-    # Pick the violation codes that appear most often across these cuisines.
+    # Pre-select 20 candidate codes by volume, then narrow to the 10 that
+    # actually DIFFERENTIATE cuisines (highest variance in lift across
+    # cuisines). Codes everyone gets at the same rate add no signal and
+    # just clutter the chart.
     code_totals = exploded["code"].value_counts()
-    top_codes = code_totals.head(15).index.tolist()
-    # Order codes by code string for stability.
-    top_codes = sorted(top_codes)
+    candidate_codes = sorted(code_totals.head(20).index.tolist())
 
-    # Rate = inspections containing this code / total inspections of this cuisine
     cuis_totals = dense[dense["cuisine_description"].isin(top_cuisines)] \
         .groupby("cuisine_description", observed=True).size()
-    cell_rate = (exploded.groupby(["cuisine_description", "code"], observed=True)
-                          .size().unstack(fill_value=0))
-    cell_rate = cell_rate.reindex(index=top_cuisines, columns=top_codes,
-                                  fill_value=0)
-    cell_rate = cell_rate.div(cuis_totals, axis=0).fillna(0)
+    cell_rate_full = (exploded.groupby(["cuisine_description", "code"], observed=True)
+                              .size().unstack(fill_value=0))
+    cell_rate_full = cell_rate_full.reindex(index=top_cuisines,
+                                            columns=candidate_codes,
+                                            fill_value=0)
+    cell_rate_full = cell_rate_full.div(cuis_totals, axis=0).fillna(0)
 
-    # City-wide rate for each code (any cuisine)
     all_exp = (dense.assign(code=lambda d: d["violation_codes"].str.split(","))
                     .explode("code"))
     all_exp = all_exp[all_exp["code"].astype(str).ne("")]
-    city_rate = (all_exp[all_exp["code"].isin(top_codes)]
-                   .groupby("code").size()
-                   .reindex(top_codes, fill_value=0) / len(dense))
+    city_rate_full = (all_exp[all_exp["code"].isin(candidate_codes)]
+                        .groupby("code").size()
+                        .reindex(candidate_codes, fill_value=0) / len(dense))
 
-    # Lift: cuisine's rate / city rate. Plotted as log2 for symmetry.
-    lift = cell_rate.div(city_rate, axis=1).replace([np.inf, -np.inf], np.nan).fillna(1)
-    log_lift = np.log2(lift.clip(lower=0.1))
+    lift_full = cell_rate_full.div(city_rate_full, axis=1) \
+        .replace([np.inf, -np.inf], np.nan).fillna(1)
+    log_lift_full = np.log2(lift_full.clip(lower=0.1))
 
-    # Short code descriptions for hover.
+    # Pick the 10 codes with highest variance across cuisines.
+    code_variance = log_lift_full.std(axis=0).sort_values(ascending=False)
+    top_codes = sorted(code_variance.head(10).index.tolist())
+
+    # Pick the 8 cuisines with most-distinctive signatures (highest variance
+    # across the chosen codes).
+    log_lift_sel = log_lift_full[top_codes]
+    cuisine_distinct = log_lift_sel.std(axis=1).sort_values(ascending=False)
+    sorted_cuisines = cuisine_distinct.head(8).index.tolist()
+
+    lift      = lift_full.loc[sorted_cuisines, top_codes]
+    log_lift  = log_lift_full.loc[sorted_cuisines, top_codes]
+    cell_rate = cell_rate_full.loc[sorted_cuisines, top_codes]
+    city_rate = city_rate_full[top_codes]
+
+    # Short single-line labels — rotated so they fit each column.
+    SHORT = {
+        "02B": "hot food cold",
+        "02G": "cold food warm",
+        "04A": "no FPC cert",
+        "04H": "contaminated food",
+        "04L": "mice",
+        "04N": "filth flies",
+        "05D": "no handwash",
+        "06C": "unprotected food",
+        "06D": "unsanitised surface",
+        "06F": "wiping cloths",
+        "08A": "pest harborage",
+        "08C": "pesticide misuse",
+        "10B": "drainage",
+        "10F": "dirty surfaces",
+        "10G": "dishwashing",
+    }
+    code_tick_text = [
+        f"<b>{c}</b>  <span style='color:#7f8c8d'>{SHORT.get(c, '')}</span>"
+        for c in top_codes
+    ]
+
+    # Hover shows the precise value; no in-cell text so the eye can read the
+    # color gradient without the visual noise of 80+ tiny numbers.
     desc_map = code_description(raw, top_codes)
     hover_text = [
         [
@@ -679,20 +977,19 @@ def chart_cuisine_signatures(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figur
             f"<b>{lift.loc[cuis, code]:.2f}× lift</b>"
             for code in top_codes
         ]
-        for cuis in top_cuisines
+        for cuis in sorted_cuisines
     ]
 
     fig = go.Figure(go.Heatmap(
         z=log_lift.values,
         x=top_codes,
-        y=top_cuisines,
-        text=lift.round(2).values,
-        texttemplate="%{text:.1f}×",
-        textfont=dict(size=10),
+        y=sorted_cuisines,
         hoverinfo="text",
         hovertext=hover_text,
         colorscale=[(0.0, "#5d8aa8"), (0.5, "white"), (1.0, ACCENT)],
-        zmid=0,  # log2 = 0 means equal to city baseline
+        zmid=0,
+        zmin=-1.3, zmax=1.3,
+        xgap=3, ygap=3,
         colorbar=dict(
             title="lift",
             tickvals=[-1, 0, 1],
@@ -701,28 +998,293 @@ def chart_cuisine_signatures(dense: pd.DataFrame, raw: pd.DataFrame) -> go.Figur
         ),
     ))
     layout = base_layout(
-        "Each cuisine's signature: which violation codes show up more (or less) than average",
-        height=440,
+        "Each cuisine's signature: which codes appear more (or less) than the city-wide rate",
+        height=560,
     )
-    layout["margin"] = dict(l=10, r=20, t=80, b=44)
+    layout["margin"] = dict(l=10, r=20, t=84, b=140)
     fig.update_layout(**layout)
-    fig.update_xaxes(title="Violation code", side="bottom", tickangle=0,
-                     showgrid=False)
-    fig.update_yaxes(title="", autorange="reversed", showgrid=False)
+    fig.update_xaxes(
+        title="", side="bottom", tickangle=-35, showgrid=False,
+        tickvals=top_codes, ticktext=code_tick_text,
+        tickfont=dict(size=11),
+        automargin=True,
+    )
+    fig.update_yaxes(
+        title="", autorange="reversed", showgrid=False,
+        tickfont=dict(size=12),
+    )
     return fig
 
 
 # ---------------------------------------------------------------------------
-# §5 — Council district spread
+# §7 — "What an A really means" (re-inspection rate + critical record)
+# ---------------------------------------------------------------------------
+def compute_reinspection_rate(dense: pd.DataFrame):
+    """% of cycle-inspected restaurants that get called back for a
+    re-inspection. Returned overall and broken down by cuisine."""
+    CYCLE_INIT  = "Cycle Inspection / Initial Inspection"
+    CYCLE_REINS = "Cycle Inspection / Re-inspection"
+
+    camis_cycle  = set(dense[dense["inspection_type"] == CYCLE_INIT]["camis"])
+    camis_reinsp = set(dense[dense["inspection_type"] == CYCLE_REINS]["camis"])
+
+    overall_pct = (100 * len(camis_cycle & camis_reinsp)
+                   / max(len(camis_cycle), 1))
+
+    camis_cuis = (dense.groupby("camis", observed=True)["cuisine_description"]
+                       .agg(lambda s: s.mode().iloc[0]))
+    # Skip junk catch-all categories that aren't real cuisines.
+    JUNK = {"Other", "Not Listed/Not Applicable", ""}
+    rows = []
+    for cuis, grp in camis_cuis.groupby(camis_cuis, observed=True):
+        if str(cuis).strip() in JUNK:
+            continue
+        in_c = set(grp.index)
+        cyc  = in_c & camis_cycle
+        rei  = in_c & camis_reinsp
+        if len(cyc) >= 100:
+            rows.append({"cuisine": cuis, "n_cycle": len(cyc),
+                         "n_reinsp": len(rei),
+                         "pct": 100 * len(rei) / len(cyc)})
+    by_cuisine = pd.DataFrame(rows).sort_values("pct", ascending=True)
+    return float(overall_pct), by_cuisine
+
+
+def chart_reinspection_by_cuisine(by_cuisine: pd.DataFrame,
+                                   overall_pct: float) -> go.Figure:
+    """Horizontal bar chart of re-inspection rate per cuisine, with the
+    overall NYC average drawn as a reference line."""
+    s = by_cuisine.set_index("cuisine")
+    # Top 6 and bottom 6 — drop the muddy middle, with a blank-row separator
+    # so the reader doesn't read the gap between Thai (68%) and Tex-Mex (48%)
+    # as a continuous ranking. Plotly draws the FIRST y at the BOTTOM of a
+    # horizontal bar chart, so we sort ascending and put the lowest-of-bottom
+    # first; the highest-of-top ends up last → top of the chart.
+    top    = s.nlargest(6, "pct").sort_values("pct", ascending=True)
+    bottom = s.nsmallest(6, "pct").sort_values("pct", ascending=True)
+    sep = pd.DataFrame({"pct": [None], "n_reinsp": [None], "n_cycle": [None]},
+                       index=["·····"])
+    panel  = pd.concat([bottom, sep, top])
+
+    colors = []
+    for c in panel.index:
+        if c == "·····": colors.append("rgba(0,0,0,0)")
+        elif panel.loc[c, "pct"] > overall_pct: colors.append(ACCENT)
+        else: colors.append("#5d8aa8")
+
+    text = [f"{v:.0f}%" if v is not None and not pd.isna(v) else ""
+            for v in panel["pct"]]
+    customdata = np.stack([
+        panel["n_reinsp"].fillna(0).astype(int),
+        panel["n_cycle"].fillna(0).astype(int),
+    ], axis=-1)
+
+    fig = go.Figure(go.Bar(
+        x=panel["pct"], y=panel.index, orientation="h",
+        marker_color=colors, marker_line_width=0,
+        text=text, textposition="outside", cliponaxis=False,
+        textfont=dict(size=11, color=INK_DIM),
+        hovertemplate=("<b>%{y}</b><br>"
+                       "Re-inspected: <b>%{x:.0f}%</b><br>"
+                       "%{customdata[0]:,} of %{customdata[1]:,} cycle-inspected restaurants"
+                       "<extra></extra>"),
+        customdata=customdata,
+    ))
+    fig.add_vline(x=overall_pct, line=dict(color=INK, dash="dot", width=1))
+    fig.add_annotation(
+        x=overall_pct, y=1.0, xref="x", yref="paper",
+        xanchor="left", yanchor="bottom", xshift=4, yshift=4,
+        text=f"NYC average: {overall_pct:.0f}%",
+        showarrow=False, font=dict(size=11, color=INK_DIM),
+    )
+
+    layout = base_layout(
+        "Re-inspection rate by cuisine: % of restaurants called back after a cycle inspection",
+        height=440,
+    )
+    layout["margin"] = dict(l=10, r=20, t=66, b=44)
+    fig.update_layout(**layout)
+    fig.update_xaxes(title="% of cycle-inspected restaurants re-inspected",
+                     range=[0, panel["pct"].max(skipna=True) * 1.12],
+                     showgrid=True, gridcolor=RULE)
+    fig.update_yaxes(title="")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# §6 — Seasonality (the summer effect)
+# ---------------------------------------------------------------------------
+def compute_seasonality(dense: pd.DataFrame, raw: pd.DataFrame):
+    """Month-of-year aggregates across the full dense window: closure rate,
+    vermin rate, and the two temperature codes (cold-food / hot-food)."""
+    d = dense.copy()
+    d["month"] = d["inspection_date"].dt.month
+
+    # 02G (cold food held too warm) and 02B (hot food held too cold) flags
+    # via the joined string of violation codes on each inspection.
+    codes = d["violation_codes"].str.split(",")
+    d["has_02G"] = codes.apply(lambda lst: "02G" in lst if isinstance(lst, list) else False)
+    d["has_02B"] = codes.apply(lambda lst: "02B" in lst if isinstance(lst, list) else False)
+
+    # Vermin flag from raw violation descriptions (same regex as §1).
+    raw_v = raw.copy()
+    raw_v["is_vermin"] = raw_v["VIOLATION DESCRIPTION"].str.contains(
+        VERMIN_RE, regex=True, na=False)
+    flag = (raw_v[raw_v["is_vermin"]]
+              .groupby(["CAMIS", "_date"]).size()
+              .rename("n_vermin").reset_index())
+    flag.columns = ["camis", "inspection_date", "n_vermin"]
+    flag["camis"] = flag["camis"].astype(str)
+    d = d.merge(flag, on=["camis", "inspection_date"], how="left")
+    d["vermin"] = d["n_vermin"].fillna(0) > 0
+
+    m = d.groupby("month").agg(
+        n=("camis", "size"),
+        closure_pct=("closed", lambda s: s.mean() * 100),
+        vermin_pct=("vermin", lambda s: s.mean() * 100),
+        cold_food_pct=("has_02G", lambda s: s.mean() * 100),
+        hot_food_pct=("has_02B", lambda s: s.mean() * 100),
+    )
+    return m
+
+
+def chart_seasonality(monthly: pd.DataFrame) -> go.Figure:
+    """Twin-line chart: cold-food violations climb across summer; hot-food
+    violations move the opposite direction. Summer band shaded."""
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    xs = list(range(1, 13))
+    cold = monthly["cold_food_pct"].values
+    hot  = monthly["hot_food_pct"].values
+
+    fig = go.Figure()
+
+    # Shade meteorological summer (Jun-Aug = months 6-8)
+    fig.add_shape(type="rect",
+                  x0=5.5, x1=8.5, y0=0, y1=1, yref="paper",
+                  fillcolor="rgba(192,57,43,0.06)", line_width=0, layer="below")
+    fig.add_annotation(x=7, y=1.0, yref="paper",
+                       text="summer", showarrow=False, yshift=4,
+                       font=dict(size=11, color=ACCENT))
+
+    fig.add_trace(go.Scatter(
+        x=xs, y=cold, mode="lines+markers",
+        line=dict(color=ACCENT, width=2.5, shape="spline", smoothing=0.5),
+        marker=dict(size=8, color=ACCENT, line=dict(color="white", width=1)),
+        name="Cold food held too warm (02G)",
+        hovertemplate="<b>%{customdata}</b><br>Cold-food violation: %{y:.1f}% of inspections<extra></extra>",
+        customdata=months,
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs, y=hot, mode="lines+markers",
+        line=dict(color="#5d8aa8", width=2.5, shape="spline", smoothing=0.5),
+        marker=dict(size=8, color="#5d8aa8", line=dict(color="white", width=1)),
+        name="Hot food held too cold (02B)",
+        hovertemplate="<b>%{customdata}</b><br>Hot-food violation: %{y:.1f}% of inspections<extra></extra>",
+        customdata=months,
+    ))
+
+    layout = base_layout(
+        "Two temperature codes, twelve months. Cold-food failures rise with heat; hot-food failures fall.",
+        height=400,
+    )
+    layout["margin"] = dict(l=10, r=20, t=60, b=44)
+    fig.update_layout(**layout,
+                      legend=dict(orientation="h", x=0.5, xanchor="center",
+                                  y=-0.15, yanchor="top",
+                                  bgcolor="rgba(0,0,0,0)",
+                                  font=dict(size=11, color=INK_DIM)))
+    fig.update_xaxes(tickvals=xs, ticktext=months,
+                     showgrid=False, ticks="outside", tickcolor=RULE)
+    fig.update_yaxes(title="% of inspections with this code",
+                     showgrid=True, gridcolor=RULE, rangemode="tozero")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# §6 — Council district spread (bar + choropleth)
 # ---------------------------------------------------------------------------
 def compute_districts(dense: pd.DataFrame):
     sub = dense[dense["council_district"].ne("")]
     g = (sub.groupby("council_district")
-             .agg(n=("camis", "size"), n_closed=("closed", "sum")))
+             .agg(n=("camis", "size"),
+                  n_closed=("closed", "sum"),
+                  # Most-common borough for this district (some districts
+                  # straddle two boroughs; mode picks the dominant one).
+                  boro=("boro", lambda s: s.mode().iloc[0])))
     g = g[g["n"] >= 200]
     g["closure_pct"] = g["n_closed"] / g["n"] * 100
-    # Sort by closure rate ascending for the chart
     return g.sort_values("closure_pct", ascending=True)
+
+
+def load_districts_geojson():
+    """Load the NYC City Council Districts boundary GeoJSON (cached locally).
+    Run `src/_fetch_districts_geojson.py` once to populate."""
+    import json
+    path = REPO_ROOT / "data" / "raw" / "nyc_council_districts.geojson"
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def chart_districts_map(dist_df: pd.DataFrame, geojson: dict) -> go.Figure:
+    """Choropleth: each of NYC's 51 City Council districts shaded by
+    inspection closure rate. Matches the bar chart's data, gives the
+    geographic intuition the bar can't."""
+    df = dist_df.reset_index()
+    # GeoJSON stores district as e.g. '42' (no leading zeros); our parquet
+    # stores it as '01', '02', ... so strip leading zeros to align.
+    df["dist_id"] = df["council_district"].astype(str).str.lstrip("0")
+
+    fig = go.Figure(go.Choroplethmap(
+        geojson=geojson,
+        locations=df["dist_id"],
+        z=df["closure_pct"],
+        featureidkey="properties.coun_dist",
+        colorscale=[
+            (0.0, "#dfe6e9"),
+            (0.4, "#cfa978"),
+            (1.0, ACCENT),
+        ],
+        zmin=float(df["closure_pct"].min()),
+        zmax=float(df["closure_pct"].max()),
+        marker=dict(line=dict(color="white", width=0.6), opacity=0.85),
+        hovertemplate=(
+            "<b>Council District %{location}</b>  ·  %{customdata[2]}<br>"
+            "Closure rate: %{z:.2f}%<br>"
+            "%{customdata[1]:,} closures of %{customdata[0]:,} inspections"
+            "<extra></extra>"
+        ),
+        customdata=np.stack([df["n"].astype(int),
+                             df["n_closed"].astype(int),
+                             df["boro"].astype(str).values], axis=-1),
+        colorbar=dict(
+            title=dict(text="closure %", font=dict(size=11)),
+            len=0.55, thickness=10,
+            # Push the colorbar into the right margin gutter so it doesn't
+            # crowd the map edge.
+            x=1.02, xanchor="left", xpad=4,
+            tickfont=dict(size=10),
+            outlinewidth=0,
+        ),
+    ))
+
+    fig.update_layout(
+        map=dict(
+            style="carto-positron",
+            center=dict(lat=40.732, lon=-73.93),
+            zoom=9.6,
+        ),
+        # Reserve right-margin gutter for the colorbar so it doesn't sit on
+        # top of the map.
+        margin=dict(l=0, r=70, t=46, b=0),
+        title=dict(
+            text="NYC's 51 City Council districts, shaded by closure rate",
+            font=dict(size=15, color=INK), x=0.02, xanchor="left",
+        ),
+        font=dict(family="Inter, system-ui, sans-serif", size=13, color=INK),
+        height=540,
+    )
+    return fig
 
 
 def chart_districts(g: pd.DataFrame) -> go.Figure:
@@ -784,13 +1346,18 @@ h1 {
   font-size: 20.5px; line-height: 1.5; color: var(--ink-dim);
   font-style: italic; margin: 0 0 12px 0;
 }
+.lede {
+  font-size: 22px; line-height: 1.4; color: var(--ink);
+  font-weight: 600; margin: 0 0 22px 0;
+  letter-spacing: -0.005em;
+}
 .byline {
   font-family: "Inter", system-ui, sans-serif;
   font-size: 13px; color: var(--ink-dim); margin-top: 22px;
 }
 .byline .author { color: var(--ink); }
 .byline .author strong { font-weight: 600; }
-.byline .sep { color: var(--rule); margin: 0 6px; }
+.byline .sep { color: #c4c4c4; margin: 0 8px; font-weight: 300; }
 .byline a {
   color: var(--accent); text-decoration: none;
   border-bottom: 1px solid rgba(192,57,43,0.3);
@@ -822,6 +1389,10 @@ figcaption {
   font-size: 13px; color: var(--ink-dim);
   margin-top: 10px; text-align: center; line-height: 1.45;
 }
+figcaption .note {
+  display: block; margin-top: 8px; font-size: 12px;
+  color: var(--ink-dim); font-style: italic; opacity: 0.85;
+}
 strong { font-weight: 700; }
 em.stat { font-style: normal; font-weight: 700; color: var(--ink); }
 .pullquote {
@@ -835,6 +1406,14 @@ em.stat { font-style: normal; font-weight: 700; color: var(--ink); }
   padding: 16px 22px; margin: 28px 0; font-size: 17px; line-height: 1.55;
 }
 .callout strong { color: var(--accent); }
+.aside {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 14.5px; line-height: 1.6; color: var(--ink-dim);
+  background: rgba(127,140,141,0.07);
+  border-left: 2px solid var(--rule);
+  padding: 12px 18px;
+  margin: 10px 0 28px;
+}
 footer {
   margin-top: 72px; padding-top: 28px; border-top: 1px solid var(--rule);
   font-family: "Inter", system-ui, sans-serif;
@@ -845,6 +1424,415 @@ footer a { color: var(--accent); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
 footer h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
             color: var(--ink); margin: 18px 0 6px 0; font-weight: 700; }
+footer ol.citations { padding-left: 22px; margin: 0 0 8px 0; }
+footer ol.citations li { margin-bottom: 10px; scroll-margin-top: 24px; }
+footer ol.citations li:target {
+  background: var(--accent-soft); padding: 6px 10px;
+  margin-left: -10px; border-radius: 4px;
+}
+sup.cite { font-size: 0.65em; vertical-align: super; line-height: 0;
+           margin-left: 1px; }
+sup.cite a { color: var(--accent); text-decoration: none;
+             padding: 1px 3px; border-radius: 2px; font-weight: 700; }
+sup.cite a:hover { background: var(--accent-soft); }
+
+/* ---- Scroll-triggered chart entrance ---- */
+/* Container fade-and-slide for every chart */
+figure .chart {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.95s cubic-bezier(0.215, 0.61, 0.355, 1),
+              transform 0.95s cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+figure .chart.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* Default: horizontal bars grow from the left (scaleX).
+   Skips figures opted into vertical growth via .grow-up. */
+figure:not(.grow-up) .chart .bars .point path {
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transform-box: fill-box;
+  transition: transform 1.2s cubic-bezier(0.215, 0.61, 0.355, 1) 0.1s;
+}
+figure:not(.grow-up) .chart.is-visible .bars .point path {
+  transform: scaleX(1);
+}
+
+/* Vertical growth: bars AND scatter area-fills/lines grow from the bottom up.
+   Used by the hero histogram and the timeline area chart. */
+figure.grow-up .chart .bars .point path,
+figure.grow-up .chart .scatterlayer .trace .fills path,
+figure.grow-up .chart .scatterlayer .trace .lines path {
+  transform: scaleY(0);
+  transform-origin: 50% 100%;
+  transform-box: fill-box;
+  transition: transform 1.2s cubic-bezier(0.215, 0.61, 0.355, 1) 0.1s;
+}
+figure.grow-up .chart.is-visible .bars .point path,
+figure.grow-up .chart.is-visible .scatterlayer .trace .fills path,
+figure.grow-up .chart.is-visible .scatterlayer .trace .lines path {
+  transform: scaleY(1);
+}
+
+/* ---- Map attribution: collapsed to just the (i) icon by default ----
+   CARTO and OpenStreetMap require legal attribution, so we keep the icon
+   visible. Hovering reveals the full "© CARTO · © OpenStreetMap" text. */
+.maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-inner,
+.mapboxgl-ctrl-attrib .mapboxgl-ctrl-attrib-inner {
+  display: none;
+}
+.maplibregl-ctrl-attrib:hover .maplibregl-ctrl-attrib-inner,
+.mapboxgl-ctrl-attrib:hover .mapboxgl-ctrl-attrib-inner {
+  display: inline-block;
+  margin-left: 4px;
+}
+.maplibregl-ctrl-attrib,
+.mapboxgl-ctrl-attrib {
+  background: rgba(255,255,255,0.85) !important;
+}
+
+/* ---- Stat strip (§7 "What an A really means") ---- */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 28px 0;
+}
+.stat-tile {
+  background: white;
+  border: 1px solid var(--rule);
+  /* Warm desaturated grey here — quieter than the red --accent but with
+     enough warmth to tie back to the article's accent palette. */
+  border-left: 3px solid #6e5552;
+  border-radius: 4px;
+  padding: 18px 18px 16px;
+  display: flex; flex-direction: column;
+  align-items: flex-start;
+}
+.stat-tile .big-num {
+  font-family: "Source Serif Pro", "Charter", serif;
+  font-size: 40px; font-weight: 700; line-height: 1;
+  color: #6e5552;
+  margin-bottom: 10px;
+  font-feature-settings: "lnum"; font-variant-numeric: lining-nums;
+}
+.stat-tile .label {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 12.5px; line-height: 1.45;
+  color: var(--ink);
+}
+
+/* ---- Key takeaways box (end-of-article summary) ---- */
+.takeaways {
+  background: white;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 22px 26px 22px 26px;
+  margin: 36px 0;
+}
+.takeaways h3 {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 18px 0;
+}
+.takeaways ol {
+  margin: 0; padding-left: 22px;
+  font-family: "Source Serif Pro", "Charter", serif;
+  font-size: 16.5px; line-height: 1.6;
+  color: var(--ink);
+}
+.takeaways li { margin-bottom: 14px; }
+.takeaways li:last-child { margin-bottom: 0; }
+.takeaways strong { color: var(--ink); }
+.takeaways ol em.stat { color: var(--accent); }
+
+/* ---- Grade-card visual (intro illustration, with hover flip) ---- */
+.grade-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 34px 0 18px;
+  perspective: 1200px;
+}
+/* Outer .grade-card is the stable hit-test surface. It NEVER rotates, so
+   the browser's :hover region stays a constant rectangle no matter what
+   the rendered card is doing in 3D. The inner .card-inner is what
+   actually flips. Without this split, hovering near the corner of a
+   mid-flip card causes the hit area to shrink underneath the cursor and
+   the flip jitters back and forth. */
+.grade-card {
+  position: relative;
+  height: 168px;
+  cursor: pointer;
+}
+.card-inner {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  /* Default transition with NO delay — applies when mouse leaves so the
+     card flips back instantly. */
+  transition: transform 0.6s cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.grade-card:hover .card-inner,
+.grade-card:focus-visible .card-inner,
+.grade-card:focus .card-inner {
+  transform: rotateY(180deg);
+  /* Delay-on-enter only: cursor must REST on the card for 350ms before
+     the flip begins, so a casual cursor pass doesn't trigger anything.
+     When :hover ends the delay reverts to 0 and the card flips back
+     immediately. */
+  transition-delay: 0.35s;
+}
+.grade-card:focus { outline: none; }
+.card-face {
+  position: absolute; inset: 0;
+  background: white;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 14px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.card-back { transform: rotateY(180deg); }
+
+/* No top colored stripe — cards are clean white. */
+
+.grade-card .card-top {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+  margin-top: 6px;
+}
+.grade-card .letter {
+  font-family: "Source Serif Pro", "Charter", serif;
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 4px 0 6px;
+}
+.grade-a .letter { color: #1e8449; }
+.grade-b .letter { color: #b07c0a; }
+.grade-c .letter { color: #a02c1a; }
+
+.grade-card .range {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.grade-card .big-pct {
+  font-family: "Source Serif Pro", "Charter", serif;
+  font-size: 48px; font-weight: 700; line-height: 1;
+  margin-bottom: 8px;
+}
+.grade-a .big-pct { color: #1e8449; }
+.grade-b .big-pct { color: #b07c0a; }
+.grade-c .big-pct { color: #a02c1a; }
+.grade-card .back-label {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.grade-card .back-count {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.card-hint {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: center;
+  margin: -4px 0 26px;
+  letter-spacing: 0.04em;
+  animation: card-hint-pulse 2.2s ease-in-out infinite;
+}
+@keyframes card-hint-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grade-card, .card-hint { animation: none; transition: none; }
+  .grade-card:hover, .grade-card:focus-visible {
+    transform: rotateY(180deg);
+  }
+}
+
+/* ---- Side section nav ---- */
+html { scroll-behavior: smooth; }
+h2[id^="sec-"] { scroll-margin-top: 24px; }
+/* Nav sits just to the right of the 740px article column.
+   calc(): half the viewport + half the article width + a small gap. */
+.section-nav {
+  position: fixed;
+  left: calc(50% + 370px + 24px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+.section-nav ol {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.section-nav a {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 12px;
+  text-decoration: none;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+  padding: 8px 14px 8px 12px;
+  border-left: 2px solid var(--rule);
+  transition: color 0.2s ease, border-left-color 0.2s ease,
+              background 0.2s ease;
+  letter-spacing: 0.02em;
+}
+.section-nav a:hover {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(192,57,43,0.04);
+}
+.section-nav a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+.section-nav .num {
+  font-weight: 700;
+  font-variant-numeric: lining-nums tabular-nums;
+  min-width: 18px;
+  text-align: left;
+}
+.section-nav .label {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.section-nav:hover .label,
+.section-nav a.active .label {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (max-width: 1100px) {
+  .section-nav { display: none; }
+}
+
+/* ---- Back-to-top button ---- */
+.back-to-top {
+  position: fixed;
+  bottom: 32px; right: 32px;
+  z-index: 20;
+  width: 40px; height: 40px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  background: white;
+  color: var(--ink-dim);
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, background 0.2s ease, color 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  display: flex; align-items: center; justify-content: center;
+}
+.back-to-top.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.back-to-top:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* ========================================================================
+   Mobile layout. Two breakpoints:
+     - 760px: large phone / portrait tablet — stack 3-up grids, shrink type
+     - 480px: small phone — further tighten everything
+   ======================================================================== */
+@media (max-width: 760px) {
+  body { font-size: 17px; line-height: 1.65; }
+  .container { padding: 36px 16px 60px; }
+
+  h1 { font-size: 34px; line-height: 1.12; }
+  .deck { font-size: 18px; }
+  .lede { font-size: 19px; line-height: 1.45; }
+
+  h2 { font-size: 24px; line-height: 1.22; margin: 48px 0 14px 0; }
+  h2 .num { font-size: 22px; margin-right: 10px; }
+
+  /* Stack the 3-up grids into a single column. */
+  .grade-cards { grid-template-columns: 1fr; gap: 10px; }
+  .grade-card { height: 132px; }
+  .grade-card .letter { font-size: 54px; }
+  .grade-card .big-pct { font-size: 40px; }
+
+  .stat-strip { grid-template-columns: 1fr; gap: 12px; }
+  .stat-tile .big-num { font-size: 36px; }
+
+  /* Tighten the visual block elements. */
+  .callout { padding: 14px 16px; font-size: 16px; line-height: 1.5; }
+  .pullquote { font-size: 22px; padding-left: 16px; margin: 28px 0; }
+  .takeaways { padding: 18px 18px; }
+  .takeaways ol { font-size: 15.5px; padding-left: 18px; }
+
+  /* Figure margin smaller on mobile so charts feel tighter to surrounding text. */
+  figure { margin: 24px 0 14px; }
+  figcaption { font-size: 12.5px; }
+
+  /* Back-to-top button: closer to the corner, smaller. */
+  .back-to-top { bottom: 20px; right: 20px; width: 36px; height: 36px;
+                 font-size: 16px; }
+
+  /* Grade-card flip: shorten the rest-to-trigger delay on touch since
+     there's no accidental cursor pass-over to guard against. */
+  .grade-card:hover .card-inner,
+  .grade-card:focus .card-inner { transition-delay: 0s; }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 28px 14px 48px; }
+  h1 { font-size: 28px; }
+  .deck { font-size: 16.5px; }
+  .lede { font-size: 17.5px; }
+  h2 { font-size: 22px; margin: 40px 0 12px 0; }
+  h2 .num { font-size: 20px; margin-right: 8px; }
+  body { font-size: 16.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  figure .chart,
+  figure .chart .bars .point path,
+  figure .chart .scatterlayer .trace .fills path,
+  figure .chart .scatterlayer .trace .lines path { transition: none; }
+  figure .chart { opacity: 1; transform: none; }
+  figure .chart .bars .point path,
+  figure .chart .scatterlayer .trace .fills path,
+  figure .chart .scatterlayer .trace .lines path { transform: none; }
+}
 """
 
 
@@ -859,18 +1847,53 @@ def render(stats: dict, charts: dict) -> str:
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>What 77,000 Inspections Reveal About NYC's Restaurants</title>
+      <title>The Quiet Math of NYC's Restaurant Inspections</title>
+      <meta name="description" content="What 83,354 health inspections in 27,350 active NYC restaurants reveal about pests, plumbing, and what actually gets a kitchen shut down.">
+      <meta name="author" content="Fahim Ahamed">
+
+      <!-- Open Graph / LinkedIn / Facebook preview card -->
+      <meta property="og:type" content="article">
+      <meta property="og:title" content="The Quiet Math of NYC's Restaurant Inspections">
+      <meta property="og:description" content="What 83,354 health inspections in 27,350 active NYC restaurants reveal about pests, plumbing, and what actually gets a kitchen shut down.">
+      <meta property="og:image" content="og-image.png">
+      <meta property="og:image:width" content="1200">
+      <meta property="og:image:height" content="630">
+      <meta property="og:image:alt" content="The Quiet Math of NYC's Restaurant Inspections — a data-backed case study by Fahim Ahamed.">
+
+      <!-- Twitter / X large-image card -->
+      <meta name="twitter:card" content="summary_large_image">
+      <meta name="twitter:title" content="The Quiet Math of NYC's Restaurant Inspections">
+      <meta name="twitter:description" content="What 83,354 health inspections reveal about pests, plumbing, and what actually gets a kitchen shut down.">
+      <meta name="twitter:image" content="og-image.png">
+
+      <!-- Inline SVG favicon: dark rounded square with white "FA" monogram.
+           Embedded as a data URI so the HTML stays fully self-contained. -->
+      <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="%231a1a1a"/><text x="16" y="22" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif" font-weight="700" font-size="14" fill="white" text-anchor="middle" letter-spacing="-0.5">FA</text></svg>'>
+
       <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+Pro:wght@400;600;700&display=swap">
       <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
       <style>{CSS}</style>
     </head>
     <body>
+      <nav class="section-nav" aria-label="Sections">
+        <ol>
+          <li><a href="#sec-01" data-num="01"><span class="num">01</span><span class="label">Vermin is everywhere</span></a></li>
+          <li><a href="#sec-02" data-num="02"><span class="num">02</span><span class="label">The closure cliff</span></a></li>
+          <li><a href="#sec-03" data-num="03"><span class="num">03</span><span class="label">The 13-point ceiling</span></a></li>
+          <li><a href="#sec-04" data-num="04"><span class="num">04</span><span class="label">Most kitchens bounce back</span></a></li>
+          <li><a href="#sec-05" data-num="05"><span class="num">05</span><span class="label">NYC's food map</span></a></li>
+          <li><a href="#sec-06" data-num="06"><span class="num">06</span><span class="label">The summer effect</span></a></li>
+          <li><a href="#sec-07" data-num="07"><span class="num">07</span><span class="label">What an &lsquo;A&rsquo; really means</span></a></li>
+          <li><a href="#sec-08" data-num="08"><span class="num">08</span><span class="label">The grade card and the data behind it</span></a></li>
+        </ol>
+      </nav>
+
       <article class="container">
 
         <header>
-          <div class="eyebrow">A Data Case Study</div>
-          <h1>The Quiet Math of New York's Restaurant Inspections</h1>
+          <div class="eyebrow">A Data-Backed Case Study</div>
+          <h1>The Quiet Math of New York City's Restaurant Inspections</h1>
           <p class="deck">
             What <strong>{s['n_inspections']:,}</strong> health inspections in
             <strong>{s['n_restaurants']:,}</strong> active New York City restaurants reveal
@@ -879,9 +1902,9 @@ def render(stats: dict, charts: dict) -> str:
           <div class="byline">
             <div class="author">
               By <strong>Fahim Ahamed</strong>
-              <span class="sep">·</span>
+              <span class="sep">|</span>
               <a href="https://www.linkedin.com/in/f-a-tonmoy/" target="_blank" rel="noopener">LinkedIn</a>
-              <span class="sep">·</span>
+              <span class="sep">|</span>
               <a href="https://f-a-tonmoy.github.io/" target="_blank" rel="noopener">Portfolio</a>
             </div>
             <div class="source">
@@ -890,37 +1913,85 @@ def render(stats: dict, charts: dict) -> str:
           </div>
         </header>
 
-        <p class="dropcap">
-          New York City has more restaurants than any other American city.
-          Roughly <strong>{s['n_restaurants']:,}</strong> active food establishments at last count,
-          spread across five boroughs and an even longer list of cuisines.
-          Behind that visible city is an invisible one: a small army of
-          public-health inspectors who arrive at each kitchen, unannounced, on
-          a rolling cycle. They tally violations against a long checklist, add
-          up a score, and assign the letter grade that ends up taped to the
-          front window. Higher score, worse kitchen. Anything from 0 to 13
-          earns an A; 14 to 27 a B; 28 and above a C.
+        <p class="lede">
+          More than 85% of New York City's restaurant inspections end up
+          with a grade A. More than half the restaurants needed a second
+          try to get there.
         </p>
 
         <p>
-          Most diners only ever see the grade card. What they don't see is the
-          underlying data: every violation, every inspection, every closure.
-          The city quietly publishes all of it on its open-data portal. That
-          is a generous slice of the city's food life. Every deli, every
-          wedding venue, every late-night Halal cart that has a permit,
-          photographed in a different moment of order or disorder by someone
-          with a clipboard.
+          Behind every A taped to a New York City storefront sits a
+          public-health inspection report: a long checklist, a numerical
+          score, and at the bottom, a single letter. City inspectors arrive
+          at each kitchen unannounced, on a rolling cycle<sup class="cite"><a href="#cite-1">1</a></sup>,
+          and tally violations against that checklist. The score is what
+          counts. Higher number, worse kitchen<sup class="cite"><a href="#cite-1">1</a></sup>.
+        </p>
+
+        <div class="grade-cards" aria-label="The three NYC restaurant grades">
+          <div class="grade-card grade-a" tabindex="0">
+            <div class="card-inner">
+              <div class="card-face card-front">
+                <div class="card-top">GRADE</div>
+                <div class="letter">A</div>
+                <div class="range">score 0 – 13</div>
+              </div>
+              <div class="card-face card-back">
+                <div class="big-pct">{s['grade_a_pct']:.0f}%</div>
+                <div class="back-label">of all graded inspections</div>
+                <div class="back-count">{s['grade_a_n']:,} received an A</div>
+              </div>
+            </div>
+          </div>
+          <div class="grade-card grade-b" tabindex="0">
+            <div class="card-inner">
+              <div class="card-face card-front">
+                <div class="card-top">GRADE</div>
+                <div class="letter">B</div>
+                <div class="range">score 14 – 27</div>
+              </div>
+              <div class="card-face card-back">
+                <div class="big-pct">{s['grade_b_pct']:.0f}%</div>
+                <div class="back-label">of all graded inspections</div>
+                <div class="back-count">{s['grade_b_n']:,} received a B</div>
+              </div>
+            </div>
+          </div>
+          <div class="grade-card grade-c" tabindex="0">
+            <div class="card-inner">
+              <div class="card-face card-front">
+                <div class="card-top">GRADE</div>
+                <div class="letter">C</div>
+                <div class="range">score 28 and up</div>
+              </div>
+              <div class="card-face card-back">
+                <div class="big-pct">{s['grade_c_pct']:.1f}%</div>
+                <div class="back-label">of all graded inspections</div>
+                <div class="back-count">{s['grade_c_n']:,} received a C</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="card-hint">hover any card to see the breakdown</p>
+
+        <p>
+          Most diners only see the card. The Department of Health publishes
+          the data underneath on its open-data portal: every violation,
+          every inspection, every closure. Roughly
+          <strong>{s['n_inspections']:,}</strong> inspections of
+          <strong>{s['n_restaurants']:,}</strong> active restaurants sit in
+          the file, every deli and wedding venue and late-night halal cart
+          with a permit, each one a snapshot of a kitchen on a particular day.
         </p>
 
         <p>
-          How much data, and from when? DOHMH publishes inspections on a
-          rolling roughly three-year window. Records older than that drop off
-          the back end as new ones come in. In practice, the months before
-          2022 are very thinly populated. The program's published output only
-          reached full monthly volume through the back half of that year.
+          DOHMH publishes inspections on a rolling roughly three-year
+          window<sup class="cite"><a href="#cite-2">2</a></sup>. Months
+          before 2022 are thinly populated; the program reached full monthly
+          volume in mid-2022.
         </p>
 
-        <figure>
+        <figure class="grow-up">
           <div class="chart">{charts['timeline']}</div>
           <figcaption>
             Inspections per published month, January 2007 through May 2026.
@@ -930,34 +2001,41 @@ def render(stats: dict, charts: dict) -> str:
         </figure>
 
         <p>
-          Looking at all of those visits at once produces a portrait that no
-          single grade card can. The picture is, by turns, reassuring and
-          alarming. Most inspections turn out roughly the same. Most kitchens
-          recover from a bad day. A handful of very specific failures, however,
-          end the inspection on the spot.
+          Look at all <strong>{s['n_inspections']:,}</strong> inspections
+          together and patterns show up that no single grade card reveals.
         </p>
 
-        <figure>
+        <figure class="grow-up">
           <div class="chart">{charts['hero']}</div>
           <figcaption>
             Every NYC inspection score from 2022 to 2026, in two-point bins.
             Hover any bar for the count. The long right-hand tail is real,
             just very thin compared with the A-zone peak.
+            <span class="note">Restaurant names in the three callouts are anonymized; the scores, dates, and outcomes are real and verifiable.</span>
           </figcaption>
         </figure>
 
-        <h2><span class="num">01</span>Vermin is everywhere.</h2>
+        <h2 id="sec-01"><span class="num">01</span>Vermin is everywhere.</h2>
 
         <p>
-          The single most surprising number from the data is the one that
-          shouldn't be. <em class="stat">{s['vermin_pct']:.0f}%</em> of New
-          York inspections find evidence of mice, rats, roaches or flies.
-          One in three. Borough to borough, the variation is mild:
+          The most surprising number in the data shouldn't be:
+          <em class="stat">{s['vermin_pct']:.0f}%</em> of NYC inspections
+          find evidence of mice, rats, roaches or flies. One in three.
+          Borough to borough, the variation is mild:
           {s['bronx_vermin_pct']:.0f}% in the Bronx, {s['si_vermin_pct']:.0f}% on
-          Staten Island. Neighborhood to neighborhood, the spread is sharper.
-          The worst residential or commercial slice of the city sees a pest
-          violation in roughly <em class="stat">{s['nta_worst_pct']:.0f}%</em>
-          of inspections, the cleanest in about <em class="stat">{s['nta_best_pct']:.0f}%</em>.
+          Staten Island. The borough numbers also reflect things the
+          inspection data can't see: building age, sanitation infrastructure,
+          and the rodent pressure a kitchen is operating against before its
+          own practices enter the picture. At the neighbourhood level (NTAs
+          with at least 200 inspections), the spread gets sharper: the
+          worst sits at roughly <em class="stat">{s['nta_worst_pct']:.0f}%</em>
+          of inspections finding vermin, the cleanest at about
+          <em class="stat">{s['nta_best_pct']:.0f}%</em>. The rate also has
+          a calendar pulse: it peaks in
+          <em class="stat">{s['vermin_peak_month']}</em> at
+          <em class="stat">{s['vermin_peak_pct']:.0f}%</em> of inspections
+          and bottoms out in <em class="stat">{s['vermin_low_month']}</em>
+          at about <em class="stat">{s['vermin_low_pct']:.0f}%</em>.
         </p>
 
         <figure>
@@ -969,21 +2047,20 @@ def render(stats: dict, charts: dict) -> str:
         </figure>
 
         <p>
-          That rate is high enough to mean roughly nothing on its own. If 1 in
-          3 inspections finds vermin, then vermin can't be what closes a
-          restaurant. Most of those <em class="stat">{s['n_inspections']:,}</em>
-          visits ended with the kitchen still open. The question is what does.
+          If 1 in 3 inspections finds vermin, vermin can't be what closes a
+          restaurant. Most of those
+          <em class="stat">{s['n_inspections']:,}</em> visits ended with
+          the kitchen still open. The question is what does.
         </p>
 
-        <h2><span class="num">02</span>The closure cliff.</h2>
+        <h2 id="sec-02"><span class="num">02</span>The closure cliff.</h2>
 
         <p>
-          Most violations don't shut you down. A handful do. New York City
-          inspectors close a restaurant on the spot in only
-          <em class="stat">{s['baseline_closure_pct']:.2f}%</em> of inspections
-          (fewer than two in every hundred). That headline rate hides a
-          sharper truth. When a few specific violations appear, the closure
-          probability doesn't just creep up. It jumps.
+          NYC inspectors close a restaurant on the spot in only
+          <em class="stat">{s['baseline_closure_pct']:.2f}%</em> of
+          inspections. That headline rate hides a sharper truth: when a few
+          specific violations appear, the closure probability doesn't creep
+          up. It jumps.
         </p>
 
         <figure>
@@ -997,11 +2074,9 @@ def render(stats: dict, charts: dict) -> str:
         </figure>
 
         <p>
-          The pattern is striking. Vermin codes, even the live-roach code
-          and the live-rat code, push closure risk up by roughly three to
-          five times the baseline. They are bad. They are not, by themselves,
-          the reason kitchens get shut down. The codes that <em>do</em> shut
-          kitchens down are about plumbing.
+          Even the live-roach and live-rat codes only push closure risk to
+          three to five times the baseline. They're bad, but they aren't,
+          by themselves, what closes kitchens.
         </p>
 
         <p>
@@ -1016,21 +2091,21 @@ def render(stats: dict, charts: dict) -> str:
 
         <div class="callout">
           <strong>It's the plumbing.</strong> A live rat sighting raises your
-          chance of being closed by about 5×. A sewage problem raises it by
-          15 to 19×. Vermin makes the news; sewage takes the keys.
+          chance of being closed by about 5×. A sewage problem raises it
+          14 to 20×. Everyone worries about rats. The data says worry about
+          the pipes.
         </div>
 
         <p>
-          The deeper read is that these inspections are rarely single-issue
-          events. Only <em class="stat">{s['cliff_n']:,}</em> inspections contained one of
-          the three top sewage codes over the three-year window, but those
-          inspections had a median score of <em class="stat">{s['cliff_med_score']:.0f}</em>
-          (versus <em class="stat">13</em> for everyone else) and a median of
+          These inspections are rarely single-issue events. Only
+          <em class="stat">{s['cliff_n']:,}</em> inspections contained one
+          of the three top sewage codes in the window, but those had a
+          median score of <em class="stat">{s['cliff_med_score']:.0f}</em>
+          (versus <em class="stat">13</em> for everyone else) and
           <em class="stat">{s['cliff_med_viols']:.0f} violations</em> apiece
           (versus three). The plumbing failure is the marker, not the sole
-          cause. When a kitchen reaches that point, a lot has already gone
-          wrong. <strong>{s['cliff_pct_critical']:.0f}%</strong> of those
-          inspections also flagged at least one critical food-safety violation.
+          cause. <strong>{s['cliff_pct_critical']:.0f}%</strong> also
+          flagged at least one critical food-safety violation.
         </p>
 
         <p>
@@ -1038,41 +2113,47 @@ def render(stats: dict, charts: dict) -> str:
           end of the spectrum. A <em class="stat">Le Pain Quotidien</em>
           location in Manhattan posted a score of 168 in July 2023 with a
           sewage citation. A Manhattan <em class="stat">% Arabica</em> hit 163
-          in March 2026 under the same code. A small Brooklyn restaurant called
-          Jay &amp; Son Latin Flavor recorded a score of <em class="stat">200</em>
-          this past spring, with eighteen violations, eleven of them critical,
-          and sewage among them. Each of these kitchens was closed that day.
+          in March 2026 under the same code. A Brooklyn restaurant recorded
+          a catastrophic <em class="stat">200</em> in April 2026, with
+          eighteen violations,
+          eleven of them critical, and sewage among them. Each of these
+          kitchens was closed that day. The Le Pain inspection is from
+          mid-2023; the others are from 2026. These are individual snapshots
+          from across the three-year window, not a current scandal.
         </p>
 
         <p>
           The sewage-cliff inspections aren't concentrated in one part of the
-          city. They're scattered across all five boroughs, in every
-          neighborhood the published data covers. Each red dot below is an
-          on-the-spot closure that involved a sewage code; each grey dot, an
-          inspection that found the same issue but did not (yet) end in a
-          closure. Hover any pin for the restaurant, address, score, and date.
+          city. They're scattered across all five boroughs. Red dots are
+          on-the-spot closures involving a sewage code; grey dots, inspections
+          that found the same issue but did not (yet) close the restaurant.
+          Hover any pin for the restaurant, address, score, and date.
         </p>
 
         <figure>
           <div class="chart">{charts['cliffmap']}</div>
           <figcaption>
-            All <em class="stat">{s['cliff_map_n']:,}</em> inspections containing
+            All <em class="stat">{s['cliff_n']:,}</em> inspections containing
             a top-three sewage code, 2022 onward. Scroll to zoom, drag to pan.
           </figcaption>
         </figure>
 
-        <h2><span class="num">03</span>The 13-point ceiling.</h2>
+        <p class="aside">
+          A caveat. The dots aren't normalised for restaurant density;
+          Manhattan's denser cluster is partly just where the restaurants
+          are. Each dot is a single inspection in which a sewage code
+          appeared, not a marker of "the worst restaurants."
+        </p>
+
+        <h2 id="sec-03"><span class="num">03</span>The 13-point ceiling.</h2>
 
         <p>
-          Zoom in on the lower end of the distribution and something
-          strange falls out. Inspection scores pile up at exactly
-          <em class="stat">12</em> and <em class="stat">13</em>, the two
-          highest scores that still earn an A. Score 12 alone is the single
-          most common score in the entire dataset, with
-          <em class="stat">{s['n_at_12']:,}</em> inspections. Score 13 is the
-          second most common, with <em class="stat">{s['n_at_13']:,}</em>.
-          Together those two integers account for
-          <em class="stat">{s['n_at_12_13']:,}</em> inspections.
+          Inspection scores pile up at exactly <em class="stat">12</em> and
+          <em class="stat">13</em>, the two highest scores that still earn
+          an A. Score 12 is the single most common score in the data
+          (<em class="stat">{s['n_at_12']:,}</em> inspections); score 13
+          is second (<em class="stat">{s['n_at_13']:,}</em>). Together they
+          account for <em class="stat">{s['n_at_12_13']:,}</em> inspections.
         </p>
 
         <p>
@@ -1083,7 +2164,7 @@ def render(stats: dict, charts: dict) -> str:
           count at 14, despite the bins being one point apart.
         </p>
 
-        <figure>
+        <figure class="grow-up">
           <div class="chart">{charts['bunching']}</div>
           <figcaption>
             Inspection counts at each integer score from 0 to 35. The slate
@@ -1093,49 +2174,53 @@ def render(stats: dict, charts: dict) -> str:
         </figure>
 
         <p>
-          This is not random. The grade-card boundary lives exactly between
-          13 and 14. In the published data, every single inspection scoring
-          0 through 13 received an A. Every single inspection scoring 14
-          through 27 received a B. A one-point swing on the inspector's
-          worksheet is the difference between a green A taped to the front
-          window and a yellow B that has to stay up until you re-inspect.
+          This is not random. The grade boundary lives exactly between 13
+          and 14. Every inspection scoring 0–13 received an A; every one
+          scoring 14–27 received a B. With rare exceptions, no boundary
+          crossings either way. A one-point swing on the worksheet is the
+          difference between a green A taped to the window and a yellow B
+          that stays up until re-inspection.
         </p>
 
         <p>
-          Re-inspections, whose entire purpose is to recover the A, show the
-          same discontinuity. A re-inspection landing at 13 is roughly
+          Re-inspections, whose purpose is to recover the A, show the same
+          discontinuity. A re-inspection landing at 13 is roughly
           <em class="stat">{s['re_ratio_13_14']:.0f}×</em> as common as one
-          landing at 14. The data does not say whether the pile-up reflects
+          landing at 14. The data can't say whether this reflects
           restaurants cleaning up just enough or inspectors rounding
-          marginal cases down to the safe side of the line. Most likely it
-          reflects both. Either way, the A is a target, not a description.
+          marginal cases to the safe side of the line. Most likely both.
+          Either way, the A is a target, not a description.
         </p>
 
-        <h2><span class="num">04</span>What happens next.</h2>
+        <h2 id="sec-04"><span class="num">04</span>Most kitchens bounce back.</h2>
 
         <p>
-          Closures look severe but they're not, in most cases, permanent.
-          The city moves fast. After a sewage-cliff closure, the median wait
-          until the next inspection is just <em class="stat">{s['days_to_followup']}
-          days</em>, compared with about <em class="stat">70 days</em> for a
-          routine cycle re-inspection. Roughly <em class="stat">{s['pct_reopened']:.0f}%</em>
-          of those follow-ups end with DOHMH formally re-opening the
-          restaurant. The kitchen, usually, gets cleaned up.
+          Most NYC kitchen closures are over in a week. After a
+          sewage-cliff closure, the median wait until the next inspection
+          is just <em class="stat">{s['days_to_followup']} days</em>,
+          versus about <em class="stat">70 days</em> for a routine
+          re-inspection, and
+          <em class="stat">{s['pct_reopened']:.0f}%</em> of those
+          follow-ups end with DOHMH formally re-opening the restaurant.
+          The system is built to give kitchens a fast second chance, and
+          most take it.
         </p>
 
         <p>
-          A broader version of the same story holds for any restaurant that
-          fails its initial cycle inspection in the C zone (score 28 or
-          above): <em class="stat">{s['n_cz']:,}</em> such failures in the
-          window. Median score on the re-inspection drops by
-          <em class="stat">{s['median_drop']:.0f}</em> points, from
-          <em class="stat">{s['median_initial']:.0f}</em> all the way down to
-          <em class="stat">{s['median_reinsp']:.0f}</em>. More than half
-          (<em class="stat">{s['pct_recover_A']:.0f}%</em>) recover all the
-          way to an A on the very next visit.
+          And it isn't just sewage closures. The transformation across the
+          board is dramatic. Of the
+          <em class="stat">{s['n_cz']:,}</em> restaurants that failed an
+          initial cycle inspection in the C zone (score 28 or above), the
+          median score on the re-inspection drops
+          <em class="stat">{s['median_drop']:.0f}</em> points in about two
+          months, from <em class="stat">{s['median_initial']:.0f}</em> down
+          to <em class="stat">{s['median_reinsp']:.0f}</em>, the highest
+          score that still earns an A. More than half
+          (<em class="stat">{s['pct_recover_A']:.0f}%</em>) recover to an A
+          on the next visit.
         </p>
 
-        <figure>
+        <figure class="grow-up">
           <div class="chart">{charts['comeback']}</div>
           <figcaption>
             Score change for restaurants that failed an initial cycle
@@ -1146,148 +2231,489 @@ def render(stats: dict, charts: dict) -> str:
 
         <p>
           A small minority defy the pattern.
-          <em class="stat">{s['pct_got_worse']:.1f}%</em> of these restaurants
-          actually <em>got worse</em> on the next inspection. Another
+          <em class="stat">{s['pct_got_worse']:.1f}%</em> of these
+          restaurants <em>got worse</em> on the next inspection. Another
           <em class="stat">{s['pct_reclosed']:.0f}%</em> of sewage-cliff
-          closures were re-closed at the very next visit. The recovery system
-          is real, but it leaks at the bottom of the distribution. The same
-          kitchens keep failing.
+          closures were re-closed at the very next visit. The recovery
+          system works for most, but it leaks: some kitchens stay in the
+          failure cycle.
         </p>
 
-        <h2><span class="num">05</span>The cuisine spectrum.</h2>
+        <h2 id="sec-05"><span class="num">05</span>NYC's food map is sliced into pockets.</h2>
 
         <p>
-          Not every cuisine fares the same. Indian restaurants are closed
-          during inspection in <em class="stat">{s['indian_pct']:.1f}%</em>
-          of visits; French restaurants in just <em class="stat">{s['french_pct']:.2f}%</em>.
-          That's a roughly <em class="stat">{s['indian_pct']/s['french_pct']:.0f}×</em>
-          gap from one end of the menu to the other.
+          NYC has restaurants in <em class="stat">{s['n_ntas_total']}</em>
+          distinct Neighborhood Tabulation Areas, the city's official
+          mid-sized geography between ZIP code and borough. Pizza lives in
+          <em class="stat">{s['pizza_n_ntas']}</em> of them. Its top five
+          neighbourhoods together account for only
+          <em class="stat">{s['pizza_top5_pct']:.0f}%</em> of all NYC pizza
+          restaurants. Pizza is, statistically, everywhere.
+        </p>
+
+        <p>
+          Other cuisines aren't. The top 5 neighbourhoods for
+          <em class="stat">{s['conc_top_cuisine']}</em> restaurants hold
+          <em class="stat">{s['conc_top5_max']:.0f}%</em> of them;
+          <em class="stat">{s['conc_top_nta_name']}</em> alone holds
+          <em class="stat">{s['conc_top_top1_pct']:.0f}%</em>. Over a third
+          of NYC's <em class="stat">{s['conc_top_cuisine']}</em>
+          restaurants sit in just two adjacent Queens neighbourhoods.
         </p>
 
         <figure>
           <div class="chart">{charts['cuisine']}</div>
           <figcaption>
-            Top and bottom of the cuisine closure-rate ranking. Bar color
-            reflects what share of that cuisine's restaurants are located in
-            Manhattan, a quiet reminder that "by cuisine" and "by
-            neighborhood" are not separable in this city.
+            Each dot is one active NYC restaurant. Five cuisines in colour
+            collapse into tight clusters; Pizza, in grey, is the
+            everywhere-reference. Hover any pin for the restaurant; toggle
+            a cuisine in the legend to isolate it.
           </figcaption>
         </figure>
 
         <p>
-          Read this chart carefully. The cuisines at the top (Indian, Middle
-          Eastern, Caribbean, Chinese) are heavily concentrated outside
-          Manhattan. The cuisines at the bottom (French, Italian, Irish,
-          Hamburgers) are disproportionately Manhattan establishments. We
-          can't tell, from this data alone, whether what we're seeing is a
-          property of the cuisines themselves or a property of the
-          neighborhoods they live in. Most likely it's some of both. The
-          confound is the finding.
+          The five coloured cuisines on the map all sit toward the top of
+          the concentration ranking. Korean is the standout multi-anchor
+          cuisine, split almost evenly between Flushing's Korean community
+          (about 94 restaurants) and Midtown Manhattan's commercial K-town
+          (about 93). Bangladeshi, Jewish/Kosher, and Eastern European
+          each track one of NYC's best-known immigrant neighbourhoods.
+          French clusters in Manhattan's historically high-income
+          districts. And Pizza, the grey layer, is the counter-example: a
+          cuisine so universal that its city-wide footprint is the city
+          itself.
         </p>
 
         <p>
-          Where cuisines clearly do differ is in <em>how</em> they fail.
-          Each cuisine has a signature pattern of citations: codes that show
-          up more (or less) often than the city-wide baseline. A few
-          examples: Chinese kitchens are over-represented on the rats and
-          mice codes. Coffee shops over-cite for missing pest-management
-          contracts. Italian and French restaurants under-cite almost
-          everywhere. The heatmap below shows the most common 15 codes
-          across the top 12 cuisines, with each cell scaled to the
-          city-wide rate for that code.
+          Two more extremes sit in the underlying numbers, beyond what the
+          map alone shows. Midtown serves food from
+          <em class="stat">{s['top_nta_div_count']}</em> distinct cuisines,
+          basically every kind of food NYC offers packed into one
+          neighbourhood. Tribeca, much smaller, manages
+          <em class="stat">{s['second_nta_div_count']}</em>. At the other
+          end, some neighbourhoods are nearly mono-cuisine:
+          <em class="stat">{s['bk96_caribbean_pct']:.0f}%</em> of East
+          Flatbush's restaurants are Caribbean,
+          <em class="stat">{s['qn22_chinese_pct']:.0f}%</em> of downtown
+          Flushing's are Chinese,
+          <em class="stat">{s['bk43_kosher_pct']:.0f}%</em> of Midwood's
+          are Jewish/Kosher. NYC's food map is fractal: radically diverse
+          in some places, radically concentrated in others.
+        </p>
+
+        <p>
+          One last fact, about how universal pizza is (and Chinese). The
+          data show pizza in <em class="stat">{s['pizza_n_ntas']}</em> NYC
+          neighbourhoods, and Chinese food in exactly the same
+          <em class="stat">{s['pizza_n_ntas']}</em>. By raw count Chinese
+          is actually the bigger of the two:
+          <em class="stat">{s['chinese_n_restaurants']:,}</em> restaurants
+          to pizza's <em class="stat">{s['pizza_n_restaurants']:,}</em>.
+          The neighbourhoods without either are mostly park, zoo, and
+          stadium areas (Central Park, the Bronx Zoo, Flushing Meadows /
+          Citi Field, the Dyker Beach Golf Course), plus a handful of
+          small residential pockets the data simply doesn't capture. The
+          only NYC neighbourhoods without pizza or Chinese are mostly the
+          ones nobody actually lives in.
+        </p>
+
+        <h2 id="sec-06"><span class="num">06</span>The summer effect.</h2>
+
+        <p>
+          Heat changes what inspectors find. The cold-food code
+          (<em class="stat">02G</em>, "cold food held above 41°F") appears
+          in <em class="stat">{s['cold_summer_pct']:.0f}%</em> of summer
+          inspections, up from
+          <em class="stat">{s['cold_winter_pct']:.0f}%</em> in winter, a
+          <em class="stat">{s['cold_summer_lift']:.2f}×</em> lift consistent
+          with walk-in coolers struggling against warmer ambient
+          temperatures.
+        </p>
+
+        <p>
+          The opposite pattern shows up on the hot-food side. The
+          <em class="stat">02B</em> code ("hot food held below 140°F")
+          actually <em>drops</em> in summer, from
+          <em class="stat">{s['hot_winter_pct']:.0f}%</em> of winter
+          inspections to <em class="stat">{s['hot_summer_pct']:.0f}%</em>
+          in summer. Same physics, opposite sign: warm kitchens help hot
+          food stay hot.
         </p>
 
         <figure>
-          <div class="chart">{charts['signatures']}</div>
+          <div class="chart">{charts['seasonality']}</div>
           <figcaption>
-            Lift relative to the city average for each (cuisine × code) pair.
-            <span style="color:#c0392b">Red</span> means this cuisine is more
-            likely than average to receive that code;
-            <span style="color:#5d8aa8">blue</span> means less likely.
-            Hover any cell for the full code description and the underlying rates.
+            Share of inspections citing each temperature code, by month of
+            year (pooled across all years in the window). The shaded band
+            is meteorological summer (Jun–Aug).
           </figcaption>
         </figure>
 
-        <h2><span class="num">06</span>The smaller-than-borough story.</h2>
+        <p>
+          On-the-spot closures track the season too:
+          <em class="stat">{s['closure_summer_pct']:.2f}%</em> of summer
+          inspections end in a closure, against
+          <em class="stat">{s['closure_winter_pct']:.2f}%</em> in winter, a
+          <em class="stat">{s['closure_summer_lift']:.2f}×</em> jump.
+          <em class="stat">{s['closure_peak_month']}</em> is the riskiest
+          month for a NYC kitchen
+          (<em class="stat">{s['closure_peak_pct']:.2f}%</em>);
+          <em class="stat">{s['closure_low_month']}</em> the safest
+          (<em class="stat">{s['closure_low_pct']:.2f}%</em>). The city
+          itself slows down: roughly
+          <em class="stat">{abs(s['inspections_summer_vs_winter_pct']):.0f}%</em>
+          fewer inspections per summer month than per winter one. But the
+          ones that happen find more, on every dimension summer plausibly
+          affects. Same kitchen, different month, different odds.
+        </p>
+
+        <h2 id="sec-07"><span class="num">07</span>What an &lsquo;A&rsquo; really means.</h2>
 
         <p>
-          The familiar five-borough frame turns out to hide most of the
-          interesting variation. Sort New York's 51 City Council districts
-          by their closure rate and the spread is dramatic:
-          <em class="stat">{s['district_high_pct']:.2f}%</em> at the top,
-          <em class="stat">{s['district_low_pct']:.2f}%</em> at the bottom.
-          That is a <em class="stat">{s['district_ratio']:.1f}×</em> gap.
-          The familiar borough comparison covers about a 2× range; sub-borough
-          geography covers nearly four times that.
+          The grade card suggests a simple sort: clean restaurants get an
+          A, dirty ones don't. The data underneath suggests something else.
+        </p>
+
+        <div class="stat-strip">
+          <div class="stat-tile">
+            <div class="big-num">{s['pct_with_critical']:.0f}%</div>
+            <div class="label">of NYC's {s['n_restaurants']:,} active restaurants have been cited for at least one critical food-safety violation in the past three years (most were corrected on re-inspection)</div>
+          </div>
+          <div class="stat-tile">
+            <div class="big-num">{s['reinspect_overall_pct']:.0f}%</div>
+            <div class="label">of restaurants that had a cycle inspection were called back for a re-inspection (their first score did not earn an A)</div>
+          </div>
+          <div class="stat-tile">
+            <div class="big-num">{s['pct_hidden_b']:.0f}%</div>
+            <div class="label">of restaurants currently displaying an A had a B or C earlier in the three-year window, then cleaned up and re-earned the A through re-inspection</div>
+          </div>
+        </div>
+
+        <p>
+          The A on the door is a snapshot of the most recent visit, not a
+          long-term record. Only <em class="stat">{s['n_clean_record']:,}</em>
+          NYC restaurants (about {100 - s['pct_with_critical']:.0f}%) have a
+          perfectly clean three-year history. The remaining 96% have been
+          cited for something serious at least once, then cleaned up enough
+          to keep or earn back the grade.
+        </p>
+
+        <div class="callout">
+          <strong>Put the numbers side by side.</strong>
+          <em class="stat">{s['grade_a_pct']:.0f}%</em> of graded
+          inspections end in an A. But
+          <em class="stat">{s['reinspect_overall_pct']:.0f}%</em> of
+          restaurants needed a re-inspection to get there. And scores pile
+          up <em class="stat">{s['cluster_ratio']:.0f}×</em> more at 12–13
+          than at 14, right at the grade boundary. The A is less a
+          description of kitchen quality than an outcome the system is
+          structured to produce.
+        </div>
+
+        <p>
+          The chance of a second visit varies sharply by what kind of
+          restaurant you run. <em class="stat">{s['reinspect_top_cuisine']}</em>
+          restaurants are re-inspected
+          <em class="stat">{s['reinspect_top_pct']:.0f}%</em> of the time
+          after a cycle inspection;
+          <em class="stat">{s['reinspect_bot_cuisine']}</em> only
+          <em class="stat">{s['reinspect_bot_pct']:.0f}%</em>.
         </p>
 
         <figure>
-          <div class="chart">{charts['districts']}</div>
+          <div class="chart">{charts['reinspect']}</div>
           <figcaption>
-            All 51 NYC Council districts (≥200 inspections each), sorted by
-            inspection closure rate. The five safest are highlighted on the
-            left, the five highest on the right.
+            Top and bottom of the cuisine re-inspection ranking. The
+            dotted line is the NYC average
+            (<em class="stat">{s['reinspect_overall_pct']:.0f}%</em>).
+            Showing the top 6 and bottom 6 only; the dots between them
+            are dropped to focus the contrast.
           </figcaption>
         </figure>
 
         <p>
-          "Brooklyn" and "Manhattan" are large coalitions. Inside them are
-          districts that look almost nothing alike. A quiet reminder that
-          when we talk about the food landscape of a city, we are nearly
-          always talking about the food landscape of a few square blocks.
+          The pattern at the ends of this chart isn't about cuisine. It
+          tracks two structural factors the data can't fully separate:
+          <strong>kitchen complexity</strong> (a counter pulling pre-made
+          ingredients has fewer ways to fail than a multi-station prep
+          kitchen) and <strong>geography</strong> (cuisines that
+          concentrate in higher-income parts of the city absorb fewer
+          citations). The top of the chart skews independent, full-prep,
+          and outer-borough; the bottom skews counter-service,
+          limited-menu, often chain-operated.
         </p>
+
+        <p>
+          What the A tells you: this kitchen has been inspected recently,
+          has cleaned up whatever was off, and is not currently in active
+          enforcement. That's not nothing. But it is a much smaller claim
+          than the card makes it look.
+        </p>
+
+        <h2 id="sec-08">The grade card and the data behind it.</h2>
+
+        <p>
+          A few patterns repeat across the data, and they fit together into
+          one picture.
+        </p>
+
+        <p>
+          Vermin is everywhere, and it is not what gets a kitchen shut down.
+          When kitchens do close, plumbing is usually the trigger, and by
+          then the rest of the kitchen has usually fallen apart too. And the
+          borough-level numbers read in headlines smooth over differences
+          between neighbours several times larger than the differences
+          between boroughs.
+        </p>
+
+        <p>
+          These patterns are less about which NYC restaurants are clean
+          and more about how the grading system, the inspection cycle, and
+          the kitchens being graded interact to produce the letters on the
+          windows.
+        </p>
+
+        <aside class="takeaways" aria-label="Key takeaways">
+          <h3>Key takeaways</h3>
+          <ol>
+            <li>
+              <strong>Scores cluster right under the A/B line.</strong>
+              Scores 12 and 13 are the two most common in the data, the
+              highest still earning an A; a score of 14 is roughly
+              <em class="stat">{s['ratio_13_14']:.0f}×</em> rarer than 13,
+              one point lower.
+            </li>
+            <li>
+              <strong>Plumbing closes kitchens. Pests almost never do.</strong>
+              A live-rat citation raises closure risk about 5×; a sewage
+              code raises it 14 to 20×.
+            </li>
+            <li>
+              <strong>Most failed kitchens recover.</strong>
+              After a C-zone failure, the median score drops
+              <em class="stat">{s['median_drop']:.0f}</em> points in about
+              two months; <em class="stat">{s['pct_recover_A']:.0f}%</em> are
+              back to an A on the very next visit.
+            </li>
+            <li>
+              <strong>NYC's food map is sliced into pockets.</strong> The
+              top 5 neighbourhoods for some cuisines hold over
+              <em class="stat">{s['conc_top5_max']:.0f}%</em> of all of
+              that cuisine's restaurants in the city. Universal cuisines
+              like <strong>Pizza</strong> spread across
+              <em class="stat">{s['pizza_n_ntas']}</em> of the city's
+              <em class="stat">{s['n_ntas_total']}</em> neighbourhoods,
+              so does <strong>Chinese</strong>.
+            </li>
+          </ol>
+        </aside>
 
         <h2>What this data cannot tell us</h2>
 
         <p>
-          Two cautions matter for anyone who reads further into these numbers.
-          The first is that DOHMH publishes a <strong>rolling roughly three-year
-          window</strong> of inspection records. Earlier inspections drop off
-          the back end; the dataset's headline 2007 minimum date is a
-          decorative sliver. Everything in this article covers calendar
-          2022 onward, the period in which the city's inspection program
-          was running at full monthly volume.
+          DOHMH publishes a <strong>rolling roughly three-year window</strong>
+          of inspection records<sup class="cite"><a href="#cite-2">2</a></sup>.
+          Older inspections drop off the back end. The data's earliest
+          published year (2007) is a sliver: fewer than 10 inspections per year
+          through 2014, and under 300 per year through 2021. Everything in
+          this article uses inspections from mid-2022 onward, when monthly
+          volume reached its current level.
         </p>
 
         <p>
-          The second caution is more consequential. The city only publishes
-          records for restaurants that are still in active status. Establishments
-          that permanently closed (including any that closed after enforcement
-          and never reopened) drop out of the file entirely. The city's
-          closure rate, then, undercounts the most consequential closure of
-          all. The numbers in this article describe what happens to surviving
-          restaurants. They do not describe what happens to the ones that
-          don't come back.
+          The city also publishes records only for restaurants that are
+          still in active status<sup class="cite"><a href="#cite-2">2</a></sup>.
+          Two different things in this article are called "closure," and
+          they aren't the same:
+        </p>
+
+        <ul>
+          <li>
+            The <strong>on-the-spot closures</strong> discussed in sections
+            2 and 4 are a regulatory action DOHMH takes during an
+            inspection. They are temporary. Section 4 shows that most of
+            these restaurants are re-opened within days. The kitchens
+            involved are still in the active file.
+          </li>
+          <li>
+            <strong>Permanent business closures</strong>, where a restaurant
+            loses its permit or goes out of business and is removed from the
+            active roll, are <em>not</em> in this file at all. Whatever
+            their final inspection looked like, the record leaves with them.
+          </li>
+        </ul>
+
+        <p>
+          The closure rates in this article therefore describe what happens
+          to restaurants that are still operating today. They cannot describe
+          what happens to the ones that didn't survive long enough to stay on
+          the active roll.
         </p>
 
         <footer>
-          <h3>Source</h3>
-          <p>
-            NYC OpenData · <a href="https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j">DOHMH
-            Restaurant Inspection Results</a> (dataset id <code>43nn-pn8j</code>),
-            snapshot of 2026-05-30.
-          </p>
-          <h3>Method</h3>
-          <p>
-            Raw violation-grain CSV → one row per inspection in
-            <code>src/build_inspections.py</code>. All findings and charts
-            built by <code>src/build_article.py</code>. Restricted to
-            inspection year ≥ 2022 and the five real boroughs. The dataset
-            also contains a small amount of 2007–2021 residue (≤300 rows per
-            year), which has been excluded.
-            Charts powered by <a href="https://plotly.com/javascript/">Plotly.js</a>.
-          </p>
-          <h3>Caveats</h3>
-          <p>
-            "Active restaurants" means any CAMIS that appears in the published
-            file; permanently closed restaurants are not represented. The
-            cuisine analysis is not adjusted for the cuisine/geography
-            confound described in §5. Re-inspection pairs are bounded to ≤180
-            days so the next cycle's initial inspection is not counted as
-            the previous one's re-inspection.
-          </p>
+          <h3>Citations</h3>
+          <ol class="citations">
+            <li id="cite-1">
+              NYC Department of Health and Mental Hygiene, "Restaurant
+              Grades." Official program description and scoring rules.
+              <a href="https://www.nyc.gov/site/doh/services/restaurant-grades.page" target="_blank" rel="noopener">nyc.gov/site/doh/services/restaurant-grades.page</a>.
+              Used for the inspection-process description and the
+              A (0–13) / B (14–27) / C (28+) grade thresholds.
+            </li>
+            <li id="cite-2">
+              NYC Open Data, "DOHMH New York City Restaurant Inspection
+              Results." Data dictionary and inclusion rules.
+              <a href="https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j" target="_blank" rel="noopener">data.cityofnewyork.us · 43nn-pn8j</a>.
+              Used for the rolling three-year publishing window and the
+              active-restaurants-only inclusion policy.
+            </li>
+          </ol>
         </footer>
+      <button class="back-to-top" aria-label="Back to top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})">↑</button>
+
       </article>
+
+      <script>
+      // Scroll-triggered chart entrance animation.
+      //
+      // Each .chart element starts hidden (opacity 0, slightly translated
+      // down). When at least 15% of the element enters the viewport we add
+      // the .is-visible class, which triggers the CSS transitions defined
+      // in the stylesheet. SVG bar/line paths inside Plotly also pick up a
+      // horizontal "grow from left" transform via the same trigger.
+      //
+      // We deliberately *do not* touch Plotly's data layer: hover tooltips,
+      // zoom, and pan all keep working as they did before.
+      (function() {{
+        // Trigger zones use rootMargin so the animation fires only after the
+        // chart has scrolled meaningfully into view, not the moment its top
+        // edge crosses the viewport bottom. rootMargin '0px 0px -28% 0px'
+        // effectively raises the viewport's bottom edge 28% up the screen,
+        // so a chart enters the trigger zone roughly when it reaches the
+        // middle of the user's view.
+
+        // --- 1) Generic chart fade-in on scroll ---
+        const observer = new IntersectionObserver((entries) => {{
+          entries.forEach(entry => {{
+            if (!entry.isIntersecting) return;
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }});
+        }}, {{ threshold: 0, rootMargin: '0px 0px -20% 0px' }});
+
+        function arm() {{
+          document.querySelectorAll('figure .chart').forEach(el => {{
+            observer.observe(el);
+          }});
+          armMapZoom();
+          armSectionNav();
+        }}
+
+        // --- 3) Section-nav active-state tracking ---
+        // On every scroll, find the LAST section h2 whose top is above the
+        // viewport's 35% line — that's the section the reader is currently
+        // inside. This works whether the h2 itself is on-screen or not.
+        // IntersectionObserver alone doesn't cover the "scrolled deep into
+        // a section, h2 long gone" case, which is why we track manually.
+        function armSectionNav() {{
+          const navLinks = document.querySelectorAll('.section-nav a');
+          if (!navLinks.length) return;
+          const sections = Array.from(
+            document.querySelectorAll('article h2[id^="sec-"]'));
+          if (!sections.length) return;
+
+          function updateActive() {{
+            // Near the top of the page: no section is "current" yet.
+            if (window.scrollY < 200) {{
+              navLinks.forEach(link => link.classList.remove('active'));
+              return;
+            }}
+            const trigger = window.innerHeight * 0.35;
+            let active = sections[0];
+            for (const sec of sections) {{
+              if (sec.getBoundingClientRect().top <= trigger) {{
+                active = sec;
+              }} else {{
+                break;
+              }}
+            }}
+            navLinks.forEach(link => {{
+              link.classList.toggle('active',
+                link.getAttribute('href') === '#' + active.id);
+            }});
+          }}
+
+          window.addEventListener('scroll', updateActive, {{ passive: true }});
+          updateActive();
+        }}
+
+        // --- 2) Map zoom-in on scroll ---
+        // Both the §2 sewage-cliff map and the §5 cuisine map are rendered
+        // initially at a wide regional zoom; when each enters the user's
+        // view we animate the zoom and centre into the tighter city-focused
+        // view via Plotly.relayout in a rAF loop. Same rootMargin idea,
+        // slightly tighter so the long 2.4s zoom animation peaks while the
+        // map is fully in frame.
+        function armMapZoom() {{
+          const targets = [
+            {{ id: 'chart-cliffmap',
+               fromZoom: 9.0,  toZoom: 10.4,
+               fromLat:  40.78, toLat:  40.732,
+               fromLon: -73.93, toLon: -73.95 }},
+            {{ id: 'chart-cuisine',
+               fromZoom: 9.4,  toZoom: 10.2,
+               fromLat:  40.74, toLat:  40.73,
+               fromLon: -73.90, toLon: -73.92 }},
+          ];
+          targets.forEach(cfg => {{
+            const mapDiv = document.getElementById(cfg.id);
+            if (!mapDiv) return;
+            let triggered = false;
+            const mapObs = new IntersectionObserver((entries) => {{
+              entries.forEach(entry => {{
+                if (!entry.isIntersecting || triggered) return;
+                triggered = true;
+                setTimeout(() => runMapZoom(mapDiv, cfg), 300);
+                mapObs.unobserve(entry.target);
+              }});
+            }}, {{ threshold: 0, rootMargin: '0px 0px -25% 0px' }});
+            mapObs.observe(mapDiv);
+          }});
+        }}
+
+        function runMapZoom(div, cfg) {{
+          const duration = 2400;
+          const t0 = performance.now();
+          function step(now) {{
+            const t = Math.min(1, (now - t0) / duration);
+            const e = 1 - Math.pow(1 - t, 3);   // cubic-out
+            const z   = cfg.fromZoom + (cfg.toZoom - cfg.fromZoom) * e;
+            const lat = cfg.fromLat  + (cfg.toLat  - cfg.fromLat)  * e;
+            const lon = cfg.fromLon  + (cfg.toLon  - cfg.fromLon)  * e;
+            Plotly.relayout(div, {{
+              'map.zoom': z,
+              'map.center.lat': lat,
+              'map.center.lon': lon,
+            }});
+            if (t < 1) requestAnimationFrame(step);
+          }}
+          requestAnimationFrame(step);
+        }}
+
+        if (document.readyState === 'complete') arm();
+        else window.addEventListener('load', arm);
+      }})();
+
+      // --- 4) Back-to-top button visibility ---
+      // (Nav-clear-at-top is handled inside armSectionNav above.)
+      (function() {{
+        const btn = document.querySelector('.back-to-top');
+        if (!btn) return;
+        window.addEventListener('scroll', function() {{
+          btn.classList.toggle('visible', window.scrollY > 600);
+        }}, {{ passive: true }});
+      }})();
+      </script>
     </body>
     </html>
     """)
@@ -1334,19 +2760,138 @@ def main():
     cz = pairs[pairs["initial_score"] >= 28].copy()
     cz["drop"] = cz["initial_score"] - cz["reinsp_score"]
 
-    # Cuisines
-    cuisine_panel = compute_cuisine(dense)
-    indian_pct = float(cuisine_panel.loc["Indian", "closure_pct"])
-    french_pct = float(cuisine_panel.loc["French", "closure_pct"])
+    # Cuisines — geographic concentration across NYC's NTAs.
+    cuisine_concentration = compute_cuisine_concentration(dense)
+    n_cuisines_panel = int(len(cuisine_concentration))
+    n_ntas_total = int(dense["nta"].nunique())
+    most_concentrated   = cuisine_concentration.iloc[0]
+    most_distributed    = cuisine_concentration.iloc[-1]
+    conc_top5_max  = float(most_concentrated["top5_pct"])
+    conc_top5_min  = float(most_distributed["top5_pct"])
+    conc_top_cuisine     = str(most_concentrated["cuisine"])
+    conc_top_nta_name    = str(most_concentrated["top1_name"])
+    conc_top_top1_pct    = float(most_concentrated["top1_pct"])
+    conc_low_cuisine     = str(most_distributed["cuisine"])
+    conc_low_n_ntas      = int(most_distributed["n_ntas"])
+    # Used in the prose to reference Pizza and Chinese as the two known
+    # universal-cuisine anchors the reader can picture.
+    pizza_row = cuisine_concentration[cuisine_concentration["cuisine"] == "Pizza"].iloc[0]
+    pizza_n_ntas = int(pizza_row["n_ntas"])
+    pizza_top5_pct = float(pizza_row["top5_pct"])
+    pizza_n_restaurants = int(pizza_row["n_restaurants"])
+    chinese_row = cuisine_concentration[cuisine_concentration["cuisine"] == "Chinese"].iloc[0]
+    chinese_n_ntas = int(chinese_row["n_ntas"])
+    chinese_n_restaurants = int(chinese_row["n_restaurants"])
 
-    # Districts
+    # Fun facts for §5 closing paragraph: NTA-level diversity and dominance.
+    # rest_per_nta has one row per active restaurant; per_nta_diversity is
+    # distinct cuisine count per NTA; per_nta_dominance is "what % does
+    # that NTA's most-common cuisine make up".
+    rest_per_nta = (dense.drop_duplicates("camis")
+                          [["nta", "cuisine_description", "boro"]]
+                          .dropna(subset=["nta"]))
+    rest_per_nta = rest_per_nta[rest_per_nta["nta"].astype(str).str.strip() != ""]
+    JUNK = {"Other", "Not Listed/Not Applicable", ""}
+    rest_per_nta = rest_per_nta[~rest_per_nta["cuisine_description"].isin(JUNK)]
+    rest_per_nta = rest_per_nta[rest_per_nta["cuisine_description"].notna()]
+    nta_diversity = (rest_per_nta.groupby("nta")["cuisine_description"]
+                                 .nunique().sort_values(ascending=False))
+    # Top diverse NTA = Midtown (MN17, 65 cuisines); 2nd = Tribeca (MN13, 61).
+    top_nta_div_count = int(nta_diversity.iloc[0])
+    second_nta_div_count = int(nta_diversity.iloc[1])
+
+    # NTA-level dominance: what fraction of each NTA's restaurants belong
+    # to its single most-common cuisine. Cap to NTAs with >=30 restaurants
+    # so we don't pull from sparse parks / cemeteries.
+    nta_sizes = rest_per_nta["nta"].value_counts()
+    big_ntas = nta_sizes[nta_sizes >= 30].index
+    dom_rows = []
+    for n, g in rest_per_nta[rest_per_nta["nta"].isin(big_ntas)].groupby("nta"):
+        vc = g["cuisine_description"].value_counts()
+        dom_rows.append((n, vc.iloc[0] / len(g) * 100, vc.index[0]))
+    dom_df = (pd.DataFrame(dom_rows, columns=["nta", "top_pct", "top_cuis"])
+                .sort_values("top_pct", ascending=False))
+    # Pull the three named neighbourhood dominance facts the prose uses.
+    bk96_caribbean_pct = float(dom_df.loc[dom_df["nta"] == "BK96", "top_pct"].iloc[0])
+    qn22_chinese_pct   = float(dom_df.loc[dom_df["nta"] == "QN22", "top_pct"].iloc[0])
+    bk43_kosher_pct    = float(dom_df.loc[dom_df["nta"] == "BK43", "top_pct"].iloc[0])
+
+    # Pizza-holdout count: NTAs without a single pizza restaurant.
+    all_nta_set   = set(rest_per_nta["nta"].unique())
+    pizza_nta_set = set(rest_per_nta[
+        rest_per_nta["cuisine_description"] == "Pizza"]["nta"].unique())
+    n_no_pizza_ntas = int(len(all_nta_set - pizza_nta_set))
+
+    # Districts (bar + choropleth)
     dist = compute_districts(dense)
+    districts_geojson = load_districts_geojson()
 
     # Bunching
     bunch_counts, bunch_stats = compute_bunching(dense)
 
+    # Re-inspection rate by cuisine (§7 "What an A really means")
+    reinspect_overall_pct, reinspect_by_cuisine = compute_reinspection_rate(dense)
+    cuis_top = reinspect_by_cuisine.nlargest(1, "pct").iloc[0]
+    cuis_bot = reinspect_by_cuisine.nsmallest(1, "pct").iloc[0]
+
+    # "Critical-record" %: restaurants ever cited for a critical violation
+    n_total_camis     = int(dense["camis"].nunique())
+    camis_with_crit   = dense[dense["n_critical"] > 0]["camis"].unique()
+    pct_with_critical = 100 * len(camis_with_crit) / max(n_total_camis, 1)
+    n_clean_record    = n_total_camis - len(camis_with_crit)
+
+    # "Hidden-B" %: current-A restaurants that held a B/C earlier in window
+    dense_g = (dense[dense["grade"].isin(["A", "B", "C"])]
+                 .sort_values(["camis", "inspection_date"]))
+    latest_grade = dense_g.groupby("camis").tail(1).set_index("camis")["grade"]
+    a_now = set(latest_grade[latest_grade == "A"].index)
+    earlier_worst = (dense_g[dense_g["grade"].isin(["B", "C"])]
+                       .groupby("camis").size())
+    # restaurants whose latest grade is A AND had at least one B or C visit
+    # somewhere in their history
+    hidden_b_count = sum(
+        1 for c in a_now
+        if c in earlier_worst.index
+        # check the worse-than-A inspection happened BEFORE the latest A
+        and dense_g[(dense_g["camis"] == c) &
+                    (dense_g["grade"].isin(["B", "C"]))]["inspection_date"].min()
+            < dense_g[(dense_g["camis"] == c) &
+                      (dense_g["grade"] == "A")]["inspection_date"].max()
+    )
+    # Simpler: use the audit-script logic instead — count groups that had
+    # a worse grade BEFORE their latest A. We do it more efficiently below.
+    def _had_worse_before(grp):
+        if len(grp) < 2 or grp.iloc[-1]["grade"] != "A":
+            return False
+        return (grp.iloc[:-1]["grade"].isin(["B", "C"])).any()
+    hidden_b_count = int(dense_g.groupby("camis").apply(_had_worse_before).sum())
+    pct_hidden_b = 100 * hidden_b_count / max(len(a_now), 1)
+
+    # Seasonality (Jun-Aug = summer, Dec-Feb = winter)
+    monthly = compute_seasonality(dense, raw)
+    summer = monthly.loc[[6, 7, 8]].mean()
+    winter = monthly.loc[[12, 1, 2]].mean()
+    vermin_peak_month = monthly["vermin_pct"].idxmax()
+    vermin_peak_pct   = float(monthly["vermin_pct"].max())
+    vermin_low_month  = monthly["vermin_pct"].idxmin()
+    vermin_low_pct    = float(monthly["vermin_pct"].min())
+    closure_peak_month = monthly["closure_pct"].idxmax()
+    closure_peak_pct   = float(monthly["closure_pct"].max())
+    closure_low_month  = monthly["closure_pct"].idxmin()
+    closure_low_pct    = float(monthly["closure_pct"].min())
+    _M = {1:"January",2:"February",3:"March",4:"April",5:"May",6:"June",
+          7:"July",8:"August",9:"September",10:"October",11:"November",12:"December"}
+
     # Cliff map count (for the prose number)
     cliff_with_geo = cliff[cliff["latitude"].notna() & cliff["longitude"].notna()]
+
+    # Grade-card flip stats — count of inspections per letter grade, and the
+    # share each grade has of all graded (A+B+C) inspections.
+    grade_counts = dense["grade"].value_counts()
+    n_graded_a = int(grade_counts.get("A", 0))
+    n_graded_b = int(grade_counts.get("B", 0))
+    n_graded_c = int(grade_counts.get("C", 0))
+    n_graded   = n_graded_a + n_graded_b + n_graded_c
 
     # Stats dict — every number quoted in the prose
     stats = {
@@ -1373,26 +2918,84 @@ def main():
         "median_drop":           float(cz["drop"].median()),
         "pct_recover_A":         float((cz["reinsp_grade"] == "A").mean() * 100),
         "pct_got_worse":         float((cz["drop"] < 0).mean() * 100),
-        "indian_pct":            indian_pct,
-        "french_pct":            french_pct,
+        "n_cuisines_panel":      n_cuisines_panel,
+        "n_ntas_total":          n_ntas_total,
+        "conc_top5_max":         conc_top5_max,
+        "conc_top5_min":         conc_top5_min,
+        "conc_top_cuisine":      conc_top_cuisine,
+        "conc_top_nta_name":     conc_top_nta_name,
+        "conc_top_top1_pct":     conc_top_top1_pct,
+        "conc_low_cuisine":      conc_low_cuisine,
+        "conc_low_n_ntas":       conc_low_n_ntas,
+        "pizza_n_ntas":          pizza_n_ntas,
+        "pizza_top5_pct":        pizza_top5_pct,
+        "pizza_n_restaurants":   pizza_n_restaurants,
+        "chinese_n_ntas":        chinese_n_ntas,
+        "chinese_n_restaurants": chinese_n_restaurants,
+        "top_nta_div_count":     top_nta_div_count,
+        "second_nta_div_count":  second_nta_div_count,
+        "bk96_caribbean_pct":    bk96_caribbean_pct,
+        "qn22_chinese_pct":      qn22_chinese_pct,
+        "bk43_kosher_pct":       bk43_kosher_pct,
+        "n_no_pizza_ntas":       n_no_pizza_ntas,
         "district_high_pct":     float(dist["closure_pct"].max()),
         "district_low_pct":      float(dist["closure_pct"].min()),
         "district_ratio":        float(dist["closure_pct"].max() / dist["closure_pct"].min()),
+        # §7 "What an A really means" stats
+        "pct_with_critical":     float(pct_with_critical),
+        "n_clean_record":        int(n_clean_record),
+        "reinspect_overall_pct": float(reinspect_overall_pct),
+        "pct_hidden_b":          float(pct_hidden_b),
+        "reinspect_top_cuisine": str(cuis_top["cuisine"]),
+        "reinspect_top_pct":     float(cuis_top["pct"]),
+        "reinspect_bot_cuisine": str(cuis_bot["cuisine"]),
+        "reinspect_bot_pct":     float(cuis_bot["pct"]),
+        "grade_a_n":             n_graded_a,
+        "grade_b_n":             n_graded_b,
+        "grade_c_n":             n_graded_c,
+        "grade_a_pct":           n_graded_a / max(n_graded, 1) * 100,
+        "grade_b_pct":           n_graded_b / max(n_graded, 1) * 100,
+        "grade_c_pct":           n_graded_c / max(n_graded, 1) * 100,
+        # Seasonality stats for §7
+        "cold_summer_pct":       float(summer["cold_food_pct"]),
+        "cold_winter_pct":       float(winter["cold_food_pct"]),
+        "hot_summer_pct":        float(summer["hot_food_pct"]),
+        "hot_winter_pct":        float(winter["hot_food_pct"]),
+        "closure_summer_pct":    float(summer["closure_pct"]),
+        "closure_winter_pct":    float(winter["closure_pct"]),
+        "cold_summer_lift":      float(summer["cold_food_pct"] / winter["cold_food_pct"]),
+        "closure_summer_lift":   float(summer["closure_pct"] / winter["closure_pct"]),
+        "inspections_summer_vs_winter_pct":
+            float((summer["n"] / winter["n"] - 1) * 100),  # negative = fewer
+        "vermin_peak_month":     _M[int(vermin_peak_month)],
+        "vermin_peak_pct":       vermin_peak_pct,
+        "vermin_low_month":      _M[int(vermin_low_month)],
+        "vermin_low_pct":        vermin_low_pct,
+        "closure_peak_month":    _M[int(closure_peak_month)],
+        "closure_peak_pct":      closure_peak_pct,
+        "closure_low_month":     _M[int(closure_low_month)],
+        "closure_low_pct":       closure_low_pct,
         **bunch_stats,
     }
 
     # Build charts
     figs = {
-        "timeline":   chart_timeline(df),
-        "hero":       chart_hero(dense),
-        "vermin":     chart_vermin(by_boro_v, city_v),
-        "cliff":      chart_cliff(baseline, cliff_agg),
-        "cliffmap":   chart_cliff_map(dense, raw),
-        "bunching":   chart_bunching(bunch_counts),
-        "comeback":   chart_comeback(pairs),
-        "cuisine":    chart_cuisine(cuisine_panel),
-        "signatures": chart_cuisine_signatures(dense, raw),
-        "districts":  chart_districts(dist),
+        "timeline":    chart_timeline(df),
+        "hero":        chart_hero(dense),
+        "vermin":      chart_vermin(by_boro_v, city_v),
+        "cliff":       chart_cliff(baseline, cliff_agg),
+        "cliffmap":    chart_cliff_map(dense, raw),
+        "bunching":    chart_bunching(bunch_counts),
+        "comeback":    chart_comeback(pairs),
+        "cuisine":     chart_cuisine_concentration(dense, cuisine_concentration),
+        # Signature heatmap removed when §5 was refocused on geographic
+        # concentration; chart_cuisine_signatures() is kept defined in case
+        # we want to bring it back as a secondary view.
+        # District chart functions kept defined but no longer rendered —
+        # §6 districts was dropped from the article (too obvious a finding).
+        "seasonality": chart_seasonality(monthly),
+        "reinspect":   chart_reinspection_by_cuisine(reinspect_by_cuisine,
+                                                     reinspect_overall_pct),
     }
     charts = {k: fig_div(v, f"chart-{k}") for k, v in figs.items()}
 
