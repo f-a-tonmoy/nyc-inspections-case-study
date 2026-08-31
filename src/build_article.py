@@ -1,5 +1,8 @@
 """
-Build reports/article.html — the NYC restaurant-inspections case study.
+Build the NYC restaurant-inspections case study.
+
+Writes the same HTML to reports/article.html and to index.html, which is
+the page GitHub Pages serves at the site root.
 
 Single source of truth: this one script computes every quoted number AND
 builds every interactive chart, so the prose and the data cannot drift apart.
@@ -32,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PARQUET   = REPO_ROOT / "data" / "processed" / "inspections.parquet"
 RAW_CSV   = REPO_ROOT / "data" / "raw" / "dohmh_restaurant_inspections.csv"
 ARTICLE   = REPO_ROOT / "reports" / "article.html"
+INDEX     = REPO_ROOT / "index.html"
 
 REAL_BOROS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
 
@@ -1898,17 +1902,17 @@ def render(stats: dict, charts: dict) -> str:
       <meta property="og:type" content="article">
       <meta property="og:title" content="The Quiet Math of NYC's Restaurant Inspections">
       <meta property="og:description" content="What 83,354 health inspections in 27,350 active NYC restaurants reveal about pests, plumbing, and what actually gets a kitchen shut down.">
-      <meta property="og:image" content="https://f-a-tonmoy.github.io/nyc-inspections-case-study/reports/og-image.png">
-      <meta property="og:image:width" content="1200">
-      <meta property="og:image:height" content="630">
-      <meta property="og:image:alt" content="The Quiet Math of NYC's Restaurant Inspections — a data-backed case study by Fahim Ahamed.">
+      <meta property="og:image" content="https://f-a-tonmoy.github.io/nyc-inspections-case-study/reports/hero-image.png">
+      <meta property="og:image:width" content="2400">
+      <meta property="og:image:height" content="1350">
+      <meta property="og:image:alt" content="What actually shuts a kitchen down: pest violations barely move the odds of an on-the-spot closure, while sewage and plumbing failures multiply them up to 19 times the baseline.">
       <meta property="og:url" content="https://f-a-tonmoy.github.io/nyc-inspections-case-study/">
 
       <!-- Twitter / X large-image card -->
       <meta name="twitter:card" content="summary_large_image">
       <meta name="twitter:title" content="The Quiet Math of NYC's Restaurant Inspections">
       <meta name="twitter:description" content="What 83,354 health inspections reveal about pests, plumbing, and what actually gets a kitchen shut down.">
-      <meta name="twitter:image" content="https://f-a-tonmoy.github.io/nyc-inspections-case-study/reports/og-image.png">
+      <meta name="twitter:image" content="https://f-a-tonmoy.github.io/nyc-inspections-case-study/reports/hero-image.png">
 
       <!-- Inline SVG favicon: dark rounded square with white "FA" monogram.
            Embedded as a data URI so the HTML stays fully self-contained. -->
@@ -3155,8 +3159,13 @@ def main():
     }
     charts = {k: fig_div(v, f"chart-{k}") for k, v in figs.items()}
 
-    ARTICLE.write_text(render(stats, charts), encoding="utf-8")
+    html = render(stats, charts)
+    ARTICLE.write_text(html, encoding="utf-8")
+    # index.html is the page GitHub Pages actually serves, so it has to be
+    # rewritten in the same step or the published site silently goes stale.
+    INDEX.write_text(html, encoding="utf-8")
     print(f"\nWrote {ARTICLE}")
+    print(f"Wrote {INDEX}")
     print("Headline numbers used in prose:")
     for k, v in stats.items():
         print(f"  {k:>22}: {v}")

@@ -10,3 +10,8 @@ pyarrow>=14.0
 # Open Graph preview-image generator (src/build_og_image.py).
 # Pillow is small and widely available; falls back to system fonts.
 Pillow>=10.0
+
+# Static hero/cover card (src/build_hero_image.py). Plotly covers the
+# interactive article charts; the hero is a flat PNG, which matplotlib
+# renders with far better typographic control.
+matplotlib>=3.8

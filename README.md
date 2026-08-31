@@ -6,7 +6,7 @@ plumbing, geography, and what actually gets a kitchen shut down.
 
 > **Live article:** **<https://f-a-tonmoy.github.io/nyc-inspections-case-study/>**
 
-[![A cliff right at the A/B boundary — NYC restaurant inspection scores pile up at 12 and 13, collapse at 14](reports/bunching-chart-hires.png)](https://f-a-tonmoy.github.io/nyc-inspections-case-study/)
+[![What actually shuts a kitchen down: pest violations barely move the odds of an on-the-spot closure, while sewage and plumbing failures multiply them up to 19 times the baseline](reports/hero-image.png)](https://f-a-tonmoy.github.io/nyc-inspections-case-study/)
 
 Built as a reproducible Python pipeline that profiles, analyses, and renders
 a single self-contained HTML article with interactive Plotly charts, scroll-
@@ -90,16 +90,20 @@ data/
 src/
   download_data.py        Step 1 — pull raw CSV into data/raw/
   build_inspections.py    Step 2 — collapse violations to one row per inspection
-  build_article.py        Step 3 — compute findings + render article.html
+  build_article.py        Step 3 — compute findings + render article.html / index.html
   build_og_image.py       Generates the Open Graph preview card (reports/og-image.png)
+  build_og_square.py      Square 1:1 variant of the preview card
+  build_hero_image.py     Generates the README/social hero card (reports/hero-image.png)
 notebooks/
   01_visual_overview.ipynb   initial visual profile (outputs baked in)
 reports/
   article.html            THE CASE STUDY — open in any browser
+  hero-image.png          hero / cover card (2400×1350)
   og-image.png            link-preview card (1200×630)
+  og-image-square.png     link-preview card, square (1200×1200)
   data_dictionary.md      column-by-column notes on the raw CSV
   source_notes.md         official dataset description + annotated implications
-index.html                redirects the Pages root to reports/article.html
+index.html                the article, served at the Pages root
 requirements.txt          Python dependencies
 ```
 
@@ -108,7 +112,7 @@ requirements.txt          Python dependencies
 ## How to reproduce
 
 Requires Python 3.10+ and the packages in `requirements.txt`
-(pandas, numpy, plotly, pyarrow, Pillow).
+(pandas, numpy, plotly, pyarrow, Pillow, matplotlib).
 
 ```bash
 # 1. Set up a virtual environment (use whatever you like — venv, conda, uv, ...)
@@ -124,14 +128,15 @@ python src/build_inspections.py
 
 # 4. Render the article
 python src/build_article.py
-# -> writes reports/article.html
+# -> writes reports/article.html and index.html (the page Pages serves)
 
-# 5. (Optional) regenerate the Open Graph preview image
+# 5. (Optional) regenerate the preview and hero cards
 python src/build_og_image.py
+python src/build_hero_image.py
 
 # 6. Preview locally
-python -m http.server 8000 --directory reports
-# open http://localhost:8000/article.html
+python -m http.server 8000
+# open http://localhost:8000/
 ```
 
 The article HTML is self-contained: all CSS is inline, Plotly loads from CDN,
